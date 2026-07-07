@@ -95,7 +95,8 @@ def write_split(directory: Path, split: str, items):
     common_root = Path(os.path.commonpath([item.path for item in items]))
     if common_root.is_file():
         common_root = common_root.parent
-    portable_root = common_root.relative_to(Path.cwd().resolve())
+    # Write an absolute root so manifests remain valid regardless of cwd.
+    portable_root = common_root.resolve()
     with (directory / f"{split}.tsv").open("w", encoding="utf-8") as manifest, \
          (directory / f"{split}.lbl").open("w", encoding="utf-8") as labels:
         manifest.write(f"{portable_root}\n")
