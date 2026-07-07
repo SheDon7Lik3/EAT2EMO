@@ -221,3 +221,77 @@ bash scripts/eval_SER.sh ravdess fold_01
 python evaluation/summarize_ser.py /root/songhao/datasets/checkpoints/ser/ravdess
 ```
 
+## 9. 部署与同步
+
+如果你已经把代码推到 GitHub，推荐把 GitHub 作为唯一的代码同步源。本地负责开发，服务器负责拉取并运行。
+
+### 9.1 本地更新到 GitHub
+
+本地修改完成后：
+
+```bash
+git add .
+git commit -m "your message"
+git push
+```
+
+### 9.2 服务器首次部署
+
+服务器上先准备一个固定目录，例如：
+
+```bash
+cd /root/songhao/ProJ
+git clone git@github.com:SheDon7Lik3/EAT2EMO.git
+```
+
+如果你已经在服务器上有这个目录，并且它已经是一个 git 仓库，可以直接进入目录：
+
+```bash
+cd /root/songhao/ProJ/EAT2EMO
+```
+
+### 9.3 服务器日常同步
+
+服务器上拉取最新代码：
+
+```bash
+cd /root/songhao/ProJ/EAT2EMO
+git pull
+```
+
+如果你担心服务器上有本地改动，建议使用仓库里的备份拉取脚本：
+
+```bash
+cd /root/songhao/ProJ/EAT2EMO
+./scripts/backup_and_pull.sh
+```
+
+这个脚本会先把当前目录备份到 `_backups/`，再执行 `git pull --ff-only`，适合在服务器上做安全更新。
+
+### 9.4 SSH 访问说明
+
+如果仓库是私有的，服务器需要单独配置 SSH key 才能访问 GitHub。  
+如果你在服务器上已经执行过：
+
+```bash
+ssh -T git@github.com
+```
+
+并且看到了成功认证信息，就可以直接使用 SSH clone/pull。
+
+### 9.5 数据与代码分离
+
+请保持以下内容不进 Git：
+
+- 数据集原始文件
+- manifests
+- checkpoints
+- 训练日志
+- wandb / tensorboard 输出
+
+推荐做法是：
+
+- 代码放 GitHub
+- 数据放 `/root/songhao/datasets/ser_datasets`
+- checkpoint 放 `/root/songhao/datasets/checkpoints`
+- 服务器只负责 `git pull` 同步代码，不负责同步大文件
