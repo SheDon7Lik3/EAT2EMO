@@ -17,14 +17,15 @@ mkdir -p "${BACKUP_DIR}"
 
 echo "Backing up current working tree to: ${BACKUP_DIR}"
 
-# Copy the current tree while skipping git metadata and backup history.
-rsync -a \
-  --exclude '.git' \
-  --exclude '_backups' \
-  --exclude 'checkpoints' \
-  --exclude 'results' \
-  --exclude 'datasets' \
-  ./ "${BACKUP_DIR}/"
+# Copy the current tree while skipping git metadata and large generated data.
+# Use tar instead of rsync so the script works on minimal server images.
+tar -cf - \
+  --exclude='./.git' \
+  --exclude='./_backups' \
+  --exclude='./checkpoints' \
+  --exclude='./results' \
+  --exclude='./datasets' \
+  . | tar -xf - -C "${BACKUP_DIR}"
 
 echo "Current branch: $(git branch --show-current)"
 echo "Remote status before pull:"

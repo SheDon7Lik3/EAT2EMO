@@ -267,6 +267,7 @@ cd /root/songhao/ProJ/EAT2EMO
 ```
 
 这个脚本会先把当前目录备份到 `_backups/`，再执行 `git pull --ff-only`，适合在服务器上做安全更新。
+脚本当前实现不依赖 `rsync`，在精简服务器环境里也更容易直接运行。
 
 ### 9.4 SSH 访问说明
 
@@ -288,6 +289,8 @@ ssh -T git@github.com
 - checkpoints
 - 训练日志
 - wandb / tensorboard 输出
+- 服务器备份目录 `_backups/`
+- Hydra 多次实验输出 `multirun/`
 
 推荐做法是：
 

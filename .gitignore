@@ -20,6 +20,8 @@ debug/
 easy_loader/
 tb/
 wandb/
+_backups/
+multirun/
 
 checkpoints/
 results/
