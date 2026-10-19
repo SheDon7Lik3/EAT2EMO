@@ -396,6 +396,96 @@ class SerBatchScriptTest(unittest.TestCase):
             )
             self.assertFalse(output_root.exists())
 
+    def test_batch_can_select_single_fold_with_all_seeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_root = root / "data"
+            output_root = root / "runs"
+            self.make_protocol_manifests(data_root, "ravdess-song", range(5))
+            result = subprocess.run(
+                [
+                    "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
+                    "--datasets", "ravdess-song",
+                    "--protocol", "fixed", "--folds", "2",
+                    "--data-root", str(data_root),
+                    "--output-root", str(output_root),
+                    "--dry-run",
+                ],
+                cwd=PROJECT_ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.count('"fold": 2'), 5)
+            self.assertNotIn('"fold": 0', result.stdout)
+            self.assertIn("Partial folds selected", result.stderr)
+            self.assertNotIn("SUMMARY:", result.stdout)
+            self.assertFalse(output_root.exists())
+
+    def test_batch_can_select_single_seed_and_multiple_folds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_root = root / "data"
+            output_root = root / "runs"
+            self.make_protocol_manifests(data_root, "ravdess-song", range(5))
+            result = subprocess.run(
+                [
+                    "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
+                    "--datasets", "ravdess-song", "--seeds", "3949",
+                    "--protocol", "fixed", "--folds", "0,2",
+                    "--data-root", str(data_root),
+                    "--output-root", str(output_root),
+                    "--dry-run",
+                ],
+                cwd=PROJECT_ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.count('"seed": 3949'), 2)
+            self.assertIn('"fold": 0', result.stdout)
+            self.assertIn('"fold": 2', result.stdout)
+            self.assertNotIn('"seed": 42', result.stdout)
+            self.assertIn("Partial folds selected", result.stderr)
+            self.assertNotIn("SUMMARY:", result.stdout)
+
+    def test_batch_single_seed_all_folds_still_summarizes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_root = root / "data"
+            output_root = root / "runs"
+            self.make_protocol_manifests(data_root, "ravdess-song", range(5))
+            result = subprocess.run(
+                [
+                    "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
+                    "--datasets", "ravdess-song", "--seeds", "3949", "--folds", "all",
+                    "--protocol", "fixed",
+                    "--data-root", str(data_root),
+                    "--output-root", str(output_root),
+                    "--dry-run",
+                ],
+                cwd=PROJECT_ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.count('"seed": 3949'), 5)
+            self.assertIn("SUMMARY:", result.stdout)
+            self.assertIn("--expected-seeds 3949", result.stdout.replace("\\,", ","))
+
+    def test_batch_rejects_fold_invalid_for_dataset(self):
+        result = subprocess.run(
+            [
+                "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
+                "--datasets", "emodb", "--folds", "0", "--dry-run",
+            ],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Fold 0 is invalid for emodb", result.stderr)
+
     def test_batch_rejects_duplicate_seeds_before_launch(self):
         result = subprocess.run(
             [

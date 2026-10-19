@@ -80,6 +80,8 @@ bash scripts/run_all_SER.sh --protocol nested
 bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 ```
 
+批量入口支持 `--datasets`、`--seeds`、`--folds`（单值、逗号列表或 `all`）；显式 fold 子集会跳过自动 summary。
+
 服务器上先按 [GPU-RUNBOOK.md](./GPU-RUNBOOK.md) §4.1 导出环境变量；不要用系统默认 `python`。
 
 ## Upstream EAT

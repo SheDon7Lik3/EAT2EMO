@@ -473,20 +473,32 @@ bash scripts/run_all_SER.sh --protocol nested
 bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 ```
 
-只跑部分数据集/seed：
+只跑部分数据集/seed/fold：
 
 ```bash
+# 指定数据集、seeds、folds
 bash scripts/run_all_SER.sh \
-  --datasets emodb,ravdess-speech --seeds 3949,42,2026,1024,666 --protocol nested
+  --datasets emodb,ravdess-speech --seeds 3949,42 \
+  --folds 1,2 --protocol nested
+
+# 只跑一个 seed 的一个 fold
+bash scripts/run_all_SER.sh \
+  --datasets emodb --seeds 3949 --folds 1 --protocol nested
+
+# 显式表示全部
+bash scripts/run_all_SER.sh \
+  --seeds all --folds all --protocol nested
 ```
+
+`--seeds all` 是 5 个参考 seed；`--folds all` 是每个数据集自己的 full range。显式 fold 必须对选中的每个 dataset 合法，否则启动前报错。
 
 先看命令不执行：
 
 ```bash
-bash scripts/run_all_SER.sh --protocol nested --datasets emodb --seeds 3949 --dry-run
+bash scripts/run_all_SER.sh --protocol nested --datasets emodb --seeds 3949 --folds 1 --dry-run
 ```
 
-批量脚本会按 dataset 顺序串行执行 fold/seed，并在每个 dataset 完成后自动调用 `summarize_ser.py` 做严格汇总。单 GPU 下不要并行跑多个 `run_all_SER.sh`。
+批量脚本会按 dataset 顺序串行执行 fold/seed。只有 `--folds all` 时才自动调用 `summarize_ser.py` 做严格汇总；显式 fold 子集会跳过自动汇总，per-fold 的 `metrics.json` 仍保留。单 GPU 下不要并行跑多个 `run_all_SER.sh`。
 
 ### 7.3 规模与时间
 

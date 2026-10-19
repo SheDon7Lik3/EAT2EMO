@@ -12,7 +12,9 @@ fi
 SER_CONFIG_NAME="${SER_CONFIG_NAME:-eat_base_sr16k_audiosetnorm_bs32}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DATASETS="emodb,iemocap,ravdess-speech,ravdess-song"
-SEEDS="3949,42,2026,1024,666"
+DEFAULT_SEEDS="3949,42,2026,1024,666"
+SEEDS="all"
+FOLDS="all"
 PROTOCOL="nested"
 STAGE="all"
 FIXED_EPOCHS="60"
@@ -20,15 +22,16 @@ SELECTION_MAX_EPOCHS=""
 DRY_RUN=false
 
 usage() {
-  echo "Usage: $0 [--datasets LIST] [--seeds LIST] [--protocol nested|fixed] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
-  echo "Comma-separated defaults: all four datasets; seeds 3949,42,2026,1024,666."
-  echo "Completed formal runs are strictly summarized per dataset/protocol/config."
+  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol nested|fixed] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
+  echo "Defaults: all four datasets; seeds ${DEFAULT_SEEDS}; folds all."
+  echo "Completed formal runs are strictly summarized per dataset/protocol/config; partial folds skip the automatic summary."
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --datasets) DATASETS="${2:-}"; shift 2 ;;
     --seeds) SEEDS="${2:-}"; shift 2 ;;
+    --folds) FOLDS="${2:-}"; shift 2 ;;
     --protocol) PROTOCOL="${2:-}"; shift 2 ;;
     --stage) STAGE="${2:-}"; shift 2 ;;
     --fixed-epochs) FIXED_EPOCHS="${2:-}"; shift 2 ;;
@@ -58,9 +61,33 @@ if [[ "$PROTOCOL" == fixed && -n "$SELECTION_MAX_EPOCHS" ]]; then
   exit 2
 fi
 [[ -n "$SER_DATA_ROOT" && -n "$SER_OUTPUT_ROOT" ]] || { echo "Data/output roots cannot be empty" >&2; exit 2; }
+[[ -n "$SEEDS" && -n "$FOLDS" ]] || { echo "--seeds/--folds cannot be empty" >&2; exit 2; }
+
+if [[ "$SEEDS" == "all" ]]; then
+  SEEDS_CSV="$DEFAULT_SEEDS"
+else
+  SEEDS_CSV="$SEEDS"
+fi
+
+if [[ "$FOLDS" == "all" ]]; then
+  FOLDS_ALL=true
+  requested_folds=()
+else
+  FOLDS_ALL=false
+  IFS=',' read -r -a requested_folds <<< "$FOLDS"
+  [[ ${#requested_folds[@]} -gt 0 ]] || { echo "--folds list cannot be empty" >&2; exit 2; }
+  seen_folds=","
+  for fold in "${requested_folds[@]}"; do
+    [[ "$fold" =~ ^[0-9]+$ ]] || { echo "Invalid fold: $fold" >&2; exit 2; }
+    case "$seen_folds" in
+      *",${fold},"*) echo "Duplicate fold: $fold" >&2; exit 2 ;;
+    esac
+    seen_folds="${seen_folds}${fold},"
+  done
+fi
 
 IFS=',' read -r -a dataset_list <<< "$DATASETS"
-IFS=',' read -r -a seed_list <<< "$SEEDS"
+IFS=',' read -r -a seed_list <<< "$SEEDS_CSV"
 [[ ${#dataset_list[@]} -gt 0 && ${#seed_list[@]} -gt 0 ]] || { echo "Dataset and seed lists cannot be empty" >&2; exit 2; }
 [[ "$SER_CONFIG_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid config name: $SER_CONFIG_NAME" >&2; exit 2; }
 
@@ -76,6 +103,7 @@ for dataset in "${dataset_list[@]}"; do
   esac
   seen_datasets="${seen_datasets}${dataset},"
 done
+
 seen_seeds=","
 for seed in "${seed_list[@]}"; do
   [[ "$seed" =~ ^[0-9]+$ ]] || { echo "Invalid seed: $seed" >&2; exit 2; }
@@ -85,12 +113,38 @@ for seed in "${seed_list[@]}"; do
   seen_seeds="${seen_seeds}${seed},"
 done
 
+# Validate explicit folds against every selected dataset before launching anything.
+if ! $FOLDS_ALL; then
+  for dataset in "${dataset_list[@]}"; do
+    case "$dataset" in
+      emodb) first_fold=1; last_fold=10 ;;
+      iemocap) first_fold=1; last_fold=5 ;;
+      ravdess-speech|ravdess-song) first_fold=0; last_fold=4 ;;
+    esac
+    for fold in "${requested_folds[@]}"; do
+      if (( fold < first_fold || fold > last_fold )); then
+        echo "Fold $fold is invalid for $dataset (allowed $first_fold..$last_fold)" >&2
+        exit 2
+      fi
+    done
+  done
+fi
+
 for dataset in "${dataset_list[@]}"; do
   case "$dataset" in
     emodb) first_fold=1; last_fold=10; default_selection_epochs=80 ;;
     iemocap) first_fold=1; last_fold=5; default_selection_epochs=20 ;;
     ravdess-speech|ravdess-song) first_fold=0; last_fold=4; default_selection_epochs=80 ;;
   esac
+  fold_list=()
+  if $FOLDS_ALL; then
+    for ((fold=first_fold; fold<=last_fold; fold++)); do
+      fold_list+=("$fold")
+    done
+  else
+    fold_list=("${requested_folds[@]}")
+  fi
+
   effective_config="$SER_CONFIG_NAME"
   if ! $CONFIG_NAME_EXPLICIT; then
     if [[ "$PROTOCOL" == fixed && "$FIXED_EPOCHS" != 60 ]]; then
@@ -103,8 +157,9 @@ for dataset in "${dataset_list[@]}"; do
       effective_config="${effective_config}_selectmaxep${SELECTION_MAX_EPOCHS}"
     fi
   fi
+
   for seed in "${seed_list[@]}"; do
-    for ((fold=first_fold; fold<=last_fold; fold++)); do
+    for fold in "${fold_list[@]}"; do
       command=(
         "${EAT_ROOT}/scripts/finetuning_SER.sh"
         --dataset "$dataset"
@@ -132,25 +187,29 @@ for dataset in "${dataset_list[@]}"; do
   done
 
   if [[ "$PROTOCOL" == fixed || "$STAGE" != select ]]; then
-    summary_root="${SER_OUTPUT_ROOT}/${dataset}/${PROTOCOL}/${effective_config}"
-    summary_command=(
-      "$PYTHON_BIN" "${EAT_ROOT}/evaluation/summarize_ser.py"
-      "$summary_root"
-      --dataset "$dataset"
-      --protocol "$PROTOCOL"
-      --config "$effective_config"
-      --expected-seeds "$SEEDS"
-      --output "${summary_root}/summary.json"
-    )
-    if [[ "$PROTOCOL" == fixed ]]; then
-      summary_command+=(--fixed-epochs "$FIXED_EPOCHS")
-    fi
-    if $DRY_RUN; then
-      printf 'SUMMARY:'
-      printf ' %q' "${summary_command[@]}"
-      printf '\n'
+    if ! $FOLDS_ALL; then
+      echo "Partial folds selected (--folds ${FOLDS}); skipping automatic summary for ${dataset}." >&2
     else
-      "${summary_command[@]}"
+      summary_root="${SER_OUTPUT_ROOT}/${dataset}/${PROTOCOL}/${effective_config}"
+      summary_command=(
+        "$PYTHON_BIN" "${EAT_ROOT}/evaluation/summarize_ser.py"
+        "$summary_root"
+        --dataset "$dataset"
+        --protocol "$PROTOCOL"
+        --config "$effective_config"
+        --expected-seeds "$SEEDS_CSV"
+        --output "${summary_root}/summary.json"
+      )
+      if [[ "$PROTOCOL" == fixed ]]; then
+        summary_command+=(--fixed-epochs "$FIXED_EPOCHS")
+      fi
+      if $DRY_RUN; then
+        printf 'SUMMARY:'
+        printf ' %q' "${summary_command[@]}"
+        printf '\n'
+      else
+        "${summary_command[@]}"
+      fi
     fi
   fi
 done
