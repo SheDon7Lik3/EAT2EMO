@@ -6,7 +6,7 @@ common:
   log_interval: 20
   tensorboard_logdir: tb
   fp16_no_flatten_grads: true
-  seed: 1
+  seed: 3949
 
 checkpoint:
   save_interval: 1

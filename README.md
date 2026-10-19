@@ -72,10 +72,10 @@ $PYTHON_BIN tools/prepare_ser_manifests.py \
   --output "$SER_DATA_ROOT/manifests"
 
 # 单 fold：nested / fixed
-bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 1 --protocol nested
-bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 1 --protocol fixed
+bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 --protocol nested
+bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 --protocol fixed
 
-# 全部数据集 × 5 seeds，并自动汇总
+# 全部数据集 × 5 seeds（3949,42,2026,1024,666），并自动汇总
 bash scripts/run_all_SER.sh --protocol nested
 bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 ```

@@ -490,7 +490,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=sorted(DATASETS), required=True)
     parser.add_argument("--fold", type=int, required=True)
-    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=3949)
     parser.add_argument("--protocol", choices=("nested", "fixed"), default="nested")
     parser.add_argument("--stage", choices=("all", "select", "final"), default="all")
     parser.add_argument("--fixed-epochs", type=positive_int, default=DEFAULT_FIXED_EPOCHS)

@@ -12,6 +12,7 @@ from evaluation.eval_ser import (
     save_evaluation_artifacts,
 )
 from evaluation.summarize_ser import (
+    DEFAULT_SEEDS,
     aggregate_results,
     discover_fold_results,
 )
@@ -185,6 +186,9 @@ class SerMetricTest(unittest.TestCase):
 
 
 class SerAggregationTest(unittest.TestCase):
+    def test_default_seeds_match_reference_protocol(self):
+        self.assertEqual(DEFAULT_SEEDS, (3949, 42, 2026, 1024, 666))
+
     def test_non_emodb_uses_fold_mean_per_seed_and_keeps_protocols_separate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -361,6 +365,35 @@ class SerBatchScriptTest(unittest.TestCase):
             config = "eat_base_sr16k_audiosetnorm_bs32_fixedep3"
             self.assertIn(f'"config_name": "{config}"', result.stdout)
             self.assertIn(str(output_root / f"ravdess-song/fixed/{config}/summary.json"), result.stdout)
+            self.assertFalse(output_root.exists())
+
+    def test_batch_default_seeds_match_reference_protocol(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_root = root / "data"
+            output_root = root / "runs"
+            self.make_protocol_manifests(data_root, "ravdess-song", range(5))
+            result = subprocess.run(
+                [
+                    "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
+                    "--datasets", "ravdess-song",
+                    "--protocol", "fixed", "--fixed-epochs", "60",
+                    "--data-root", str(data_root),
+                    "--output-root", str(output_root),
+                    "--dry-run",
+                ],
+                cwd=PROJECT_ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for seed in (3949, 42, 2026, 1024, 666):
+                self.assertIn(f'"seed": {seed}', result.stdout)
+            # The dry-run summary is shell-quoted with %q, so commas arrive as "\,".
+            self.assertIn(
+                "--expected-seeds 3949,42,2026,1024,666",
+                result.stdout.replace("\\,", ","),
+            )
             self.assertFalse(output_root.exists())
 
     def test_batch_rejects_duplicate_seeds_before_launch(self):

@@ -12,7 +12,7 @@ fi
 SER_CONFIG_NAME="${SER_CONFIG_NAME:-eat_base_sr16k_audiosetnorm_bs32}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DATASETS="emodb,iemocap,ravdess-speech,ravdess-song"
-SEEDS="1,2,3,4,5"
+SEEDS="3949,42,2026,1024,666"
 PROTOCOL="nested"
 STAGE="all"
 FIXED_EPOCHS="60"
@@ -21,7 +21,7 @@ DRY_RUN=false
 
 usage() {
   echo "Usage: $0 [--datasets LIST] [--seeds LIST] [--protocol nested|fixed] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
-  echo "Comma-separated defaults: all four datasets; seeds 1,2,3,4,5."
+  echo "Comma-separated defaults: all four datasets; seeds 3949,42,2026,1024,666."
   echo "Completed formal runs are strictly summarized per dataset/protocol/config."
 }
 

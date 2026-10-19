@@ -49,7 +49,7 @@ EXPECTED_SAMPLES = {
     "ravdess-speech": 1440,
     "ravdess-song": 1012,
 }
-DEFAULT_SEEDS = (1, 2, 3, 4, 5)
+DEFAULT_SEEDS = (3949, 42, 2026, 1024, 666)
 
 
 @dataclass(frozen=True)

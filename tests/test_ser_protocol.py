@@ -76,6 +76,7 @@ class SerProtocolTest(unittest.TestCase):
             self.assertEqual((code, stderr), (0, ""))
             self.assertIn('"stage": "fixed"', stdout)
             self.assertIn('"epochs": 60', stdout)
+            self.assertIn('"seed": 3949', stdout)
             self.assertIn('"max_updates": 120', stdout)
             self.assertIn("dataset.disable_validation=true", stdout)
             self.assertIn("dataset.valid_subset=train", stdout)
@@ -164,6 +165,7 @@ class SerProtocolTest(unittest.TestCase):
             code, stdout, stderr = self.run_main(
                 [
                     "--dataset", "iemocap", "--fold", "1", "--stage", "final",
+                    "--seed", "1",
                     "--selection-max-epochs", "1", "--data-root", str(data_root),
                     "--output-root", str(output_root), "--pretrained", str(pretrained),
                     "--dry-run",
@@ -185,6 +187,7 @@ class SerProtocolTest(unittest.TestCase):
             args = ser_protocol.make_parser().parse_args(
                 [
                     "--dataset", "emodb", "--fold", "1", "--stage", "final",
+                    "--seed", "1",
                     "--selection-max-epochs", "1",
                     "--pretrained", str(root / "expected.pt"),
                 ]
@@ -239,6 +242,7 @@ class SerProtocolTest(unittest.TestCase):
             code, _, stderr = self.run_main(
                 [
                     "--dataset", "emodb", "--fold", "1", "--protocol", "fixed",
+                    "--seed", "1",
                     "--data-root", str(data_root), "--output-root", str(output_root), "--dry-run",
                 ]
             )
@@ -319,7 +323,8 @@ class SerProtocolTest(unittest.TestCase):
                     log_path.write_text("eval complete\n", encoding="utf-8")
 
             common = [
-                "--dataset", "emodb", "--fold", "1", "--selection-max-epochs", "1",
+                "--dataset", "emodb", "--fold", "1", "--seed", "1",
+                "--selection-max-epochs", "1",
                 "--data-root", str(data_root), "--output-root", str(output_root),
                 "--fairseq-root", str(fairseq_root), "--pretrained", str(pretrained),
             ]

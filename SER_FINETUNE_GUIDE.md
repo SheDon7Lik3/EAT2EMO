@@ -66,23 +66,23 @@ Nested 完整流程：
 
 ```bash
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol nested
+  --dataset emodb --fold 1 --seed 3949 --protocol nested
 ```
 
 也可分阶段执行：
 
 ```bash
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol nested --stage select
+  --dataset emodb --fold 1 --seed 3949 --protocol nested --stage select
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol nested --stage final
+  --dataset emodb --fold 1 --seed 3949 --protocol nested --stage final
 ```
 
 Fixed：
 
 ```bash
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol fixed --fixed-epochs 60
+  --dataset emodb --fold 1 --seed 3949 --protocol fixed --fixed-epochs 60
 ```
 
 输出按以下目录隔离，已存在时默认拒绝覆盖：
@@ -99,11 +99,11 @@ ${SER_OUTPUT_ROOT}/{dataset}/{protocol}/{config}/seed_N/fold_XX/{selection|final
 export SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO_smoke
 
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol nested \
+  --dataset emodb --fold 1 --seed 3949 --protocol nested \
   --selection-max-epochs 1
 
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol fixed \
+  --dataset emodb --fold 1 --seed 3949 --protocol fixed \
   --fixed-epochs 1
 ```
 
@@ -111,7 +111,7 @@ bash scripts/finetuning_SER.sh \
 
 ## 6. 批量实验与汇总
 
-默认运行四个数据集、seeds `1,2,3,4,5`：
+默认运行四个数据集、seeds `3949,42,2026,1024,666`：
 
 ```bash
 export SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO
@@ -123,7 +123,7 @@ bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 
 ```bash
 bash scripts/run_all_SER.sh \
-  --datasets emodb,ravdess-song --seeds 1,2,3,4,5 --protocol nested
+  --datasets emodb,ravdess-song --seeds 3949,42,2026,1024,666 --protocol nested
 ```
 
 批量流程完成一个数据集的全部 fold/seed 后会自动严格汇总。也可手动执行：

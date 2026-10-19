@@ -343,7 +343,7 @@ $PYTHON_BIN -c "import json; d=json.load(open('$SER_DATA_ROOT/manifests/emodb/fo
 ```bash
 cd "$REPO"
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol nested --dry-run
+  --dataset emodb --fold 1 --seed 3949 --protocol nested --dry-run
 ```
 
 `--dry-run` 只校验输入并打印 JSON / `TRAIN:` / `EVAL:` 命令，不写实验目录。确认：
@@ -364,7 +364,7 @@ export SER_PRETRAINED=/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_p
 export FAIRSEQ_ROOT=/root/songhao/ProJ/fairseq
 
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol nested
+  --dataset emodb --fold 1 --seed 3949 --protocol nested
 ```
 
 协议语义（selection/final/eval 各自做什么、哪些 split 可见）见 [SER_FINETUNE_GUIDE.md](SER_FINETUNE_GUIDE.md) §1 和 §7。本节只保留服务器上的操作命令。
@@ -372,8 +372,8 @@ bash scripts/finetuning_SER.sh \
 也可以分阶段：
 
 ```bash
-bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 1 --protocol nested --stage select
-bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 1 --protocol nested --stage final
+bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 --protocol nested --stage select
+bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 --protocol nested --stage final
 ```
 
 `final` 会读取 `selection/selection_summary.json`，并校验 dataset/protocol/config/fold/seed/pretrained 是否一致；不一致会拒绝。
@@ -382,7 +382,7 @@ bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 1 --protocol nest
 
 ```bash
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol fixed --fixed-epochs 60
+  --dataset emodb --fold 1 --seed 3949 --protocol fixed --fixed-epochs 60
 ```
 
 `fixed` 只读 `train/valid`，固定训练 60 epoch，全程不验证，结束后只评估一次 `valid`。`--stage` 只适用于 nested，不要传给 fixed。
@@ -415,7 +415,7 @@ ${SER_OUTPUT_ROOT}/{dataset}/{protocol}/{config}/seed_N/fold_XX/{selection|final
 ### 6.5 监控
 
 ```bash
-tail -n 50 -f "$SER_OUTPUT_ROOT/emodb/nested/eat_base_sr16k_audiosetnorm_bs32/seed_1/fold_01/final/train.log"
+tail -n 50 -f "$SER_OUTPUT_ROOT/emodb/nested/eat_base_sr16k_audiosetnorm_bs32/seed_3949/fold_01/final/train.log"
 nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv
 ```
 
@@ -434,11 +434,11 @@ export SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO_smoke
 
 # nested：1 个 fold、1 个 epoch 选模，再 1 个 epoch final + 1 次 valid 评估
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol nested --selection-max-epochs 1
+  --dataset emodb --fold 1 --seed 3949 --protocol nested --selection-max-epochs 1
 
 # fixed：1 个 fold、1 个 epoch
 bash scripts/finetuning_SER.sh \
-  --dataset emodb --fold 1 --seed 1 --protocol fixed --fixed-epochs 1
+  --dataset emodb --fold 1 --seed 3949 --protocol fixed --fixed-epochs 1
 ```
 
 smoke 会自动使用 `_selectmaxep1` / `_fixedep1` config 后缀，和正式结果隔离。检查 smoke 产出的 `metrics.json`、`predictions.npz`、`paths.txt`、`confusion_matrix.csv`、`eval.log` 都存在且可读。
@@ -466,10 +466,10 @@ echo $!
 export SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO
 cd "$REPO"
 
-# nested：4 个数据集，seeds 1-5
+# nested：4 个数据集，seeds 3949,42,2026,1024,666
 bash scripts/run_all_SER.sh --protocol nested
 
-# fixed：4 个数据集，seeds 1-5，60 epoch
+# fixed：4 个数据集，seeds 3949,42,2026,1024,666，60 epoch
 bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 ```
 
@@ -477,20 +477,20 @@ bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 
 ```bash
 bash scripts/run_all_SER.sh \
-  --datasets emodb,ravdess-speech --seeds 1,2,3,4,5 --protocol nested
+  --datasets emodb,ravdess-speech --seeds 3949,42,2026,1024,666 --protocol nested
 ```
 
 先看命令不执行：
 
 ```bash
-bash scripts/run_all_SER.sh --protocol nested --datasets emodb --seeds 1 --dry-run
+bash scripts/run_all_SER.sh --protocol nested --datasets emodb --seeds 3949 --dry-run
 ```
 
 批量脚本会按 dataset 顺序串行执行 fold/seed，并在每个 dataset 完成后自动调用 `summarize_ser.py` 做严格汇总。单 GPU 下不要并行跑多个 `run_all_SER.sh`。
 
 ### 7.3 规模与时间
 
-每个协议完整跑 5 seeds 是 **125 个 fold-run**：
+每个协议完整跑 5 seeds（3949,42,2026,1024,666）是 **125 个 fold-run**：
 
 | 数据集 | folds | seeds | fold-runs |
 |---|---:|---:|---:|
@@ -512,19 +512,19 @@ checkpoint 会保留 `last/best/final`，单个约 1.4G（参考预训练文件�
 
 ```bash
 cd "$REPO"
-bash scripts/eval_SER.sh --dataset emodb --fold 1 --seed 1 --protocol nested
+bash scripts/eval_SER.sh --dataset emodb --fold 1 --seed 3949 --protocol nested
 ```
 
 `eval_SER.sh` 会自动定位：
 
 ```text
-${SER_OUTPUT_ROOT}/emodb/nested/eat_base_sr16k_audiosetnorm_bs32/seed_1/fold_01/final/checkpoint_final.pt
+${SER_OUTPUT_ROOT}/emodb/nested/eat_base_sr16k_audiosetnorm_bs32/seed_3949/fold_01/final/checkpoint_final.pt
 ```
 
 并输出到同目录 `results/`。如果用了自定义 config 或 smoke config，显式传：
 
 ```bash
-bash scripts/eval_SER.sh --dataset emodb --fold 1 --seed 1 --protocol nested \
+bash scripts/eval_SER.sh --dataset emodb --fold 1 --seed 3949 --protocol nested \
   --config eat_base_sr16k_audiosetnorm_bs32_selectmaxep1
 ```
 
@@ -542,7 +542,7 @@ $PYTHON_BIN evaluation/summarize_ser.py \
   /root/songhao/experiments/EAT2EMO/emodb/nested/eat_base_sr16k_audiosetnorm_bs32 \
   --dataset emodb --protocol nested \
   --config eat_base_sr16k_audiosetnorm_bs32 \
-  --expected-seeds 1,2,3,4,5 \
+  --expected-seeds 3949,42,2026,1024,666 \
   --output /root/songhao/experiments/EAT2EMO/emodb/nested/eat_base_sr16k_audiosetnorm_bs32/summary.json
 ```
 
@@ -591,7 +591,7 @@ $PYTHON_BIN evaluation/summarize_ser.py \
 1. 确认每个 fold 的产物完整：
 
    ```bash
-   ls "$SER_OUTPUT_ROOT/emodb/nested/eat_base_sr16k_audiosetnorm_bs32/seed_1/fold_01/final/results"
+   ls "$SER_OUTPUT_ROOT/emodb/nested/eat_base_sr16k_audiosetnorm_bs32/seed_3949/fold_01/final/results"
    ```
 
    应包含 `metrics.json`、`predictions.npz`、`paths.txt`、`confusion_matrix.csv`。
