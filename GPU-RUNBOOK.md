@@ -1,6 +1,6 @@
 # EAT2EMO GPU 运行手册
 
-本文记录 EAT2EMO 在 GPU 服务器上的实际入口、固定资源、已完成的部署/环境状态和运行步骤。它是操作说明，不是“已训练完成”的证明。2026-10-19 的进展：代码已由本地 rsync 部署到服务器，`eat2emo` 环境已创建并通过预检；**manifest 尚未生成，训练尚未启动**。注意：服务器代码是**早期同步版本**；之后本地修复了 IEMOCAP extractor、删除了 11 个上游文件/配置并更新了文档，服务器副本尚未重新同步。
+本文记录 EAT2EMO 在 GPU 服务器上的实际入口、固定资源、已完成的部署/环境状态和运行步骤。它是操作说明，不是“已训练完成”的证明。2026-10-19 的进展：代码已由本地 rsync 部署到服务器，`eat2emo` 环境已创建并通过预检；**manifest 尚未生成，训练尚未启动**。注意：服务器代码是**早期同步版本**；之后本地修复了 IEMOCAP extractor、清理了失效的上游脚本/配置/评测代码并更新了文档，服务器副本尚未重新同步。
 
 ## 文档分工
 
@@ -20,7 +20,7 @@
 ### 1.1 一句话结论
 
 - ✅ **数据与预训练权重已就绪**：`SER_DATASET` 四个子集数量和布局与协议一致，权重与本地文件 SHA256 相同。
-- ⚠️ **代码副本已部署但已过期**：服务器 `/root/songhao/ProJ/EAT2EMO` 是 2026-10-19 早期 rsync 副本（60 files / 约 4.0 MB，无 `.git`）；本地之后修复了 IEMOCAP extractor、删除了 11 个上游文件/配置并更新了文档，当前本地为 45 files。**训练前需要重新 rsync。**
+- ⚠️ **代码副本已部署但已过期**：服务器 `/root/songhao/ProJ/EAT2EMO` 是 2026-10-19 早期 rsync 副本（60 files / 约 4.0 MB，无 `.git`）；本地之后修复了 IEMOCAP extractor、清理了失效的上游脚本/配置/评测代码并更新了文档。**训练前需要重新 rsync。**
 - ✅ **`eat2emo` 环境已验证**：Python 3.10.20、torch 2.1.2+cu121、numpy 1.26.3、sklearn 1.3.2、fairseq 0.12.2、timm 0.9.12、transformers 4.51.3；`pip check` 无 broken requirements。旧 `emoat` 保留作回退。
 - ⏳ **Manifest 与实验输出尚未生成**：`SER_DATASET/manifests` 和 `/root/songhao/experiments/EAT2EMO` 都还不存在。
 - ✅ **Git 同步已完成**：本地 `main` 与 GitHub `origin/main` 一致、工作区 clean；服务器仍是早期 rsync 副本，不能 `git pull`，训练前需重新 rsync 或按 §3.2 切回 Git。
@@ -38,7 +38,7 @@
 | GPU | 1 × NVIDIA GeForce RTX 4090，24564 MiB，driver 595.71.05 | ✅ 检查时 0% 利用率、无计算进程 |
 | CPU / 内存 | 88 vCPU / 550 GiB；load average 76.86（检查时） | ⚠️ 共享主机，跑前用 `uptime` 复查 |
 | 磁盘 | `/root` 7.3T，已用 383G，可用 6.9T；inode 使用 4% | ✅ |
-| 代码目录 | `/root/songhao/ProJ/EAT2EMO`，早期 rsync 副本（服务器 60 files / 4.0MB；本地已更新为 45 files，未同步） | ⚠️ 需重新 rsync |
+| 代码目录 | `/root/songhao/ProJ/EAT2EMO`，早期 rsync 副本（服务器 60 files / 4.0MB；本地已更新，未同步） | ⚠️ 需重新 rsync |
 | conda 环境 | `/root/miniconda3/envs/eat2emo`，Python 3.10.20；旧 `emoat` 保留作回退 | ✅ 已验证（§4.2） |
 | Fairseq | `/root/songhao/ProJ/fairseq`，0.12.2，HEAD `3d262bb2`，`import fairseq` 已验证 | ✅ |
 | 预训练权重 | `/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_pt.pt`，1.4G | ✅ SHA256 见 §1.3 |
@@ -128,7 +128,7 @@ df -h /root
 服务器 `/root/songhao/ProJ/EAT2EMO` 是本地工作区的**早期**代码副本，由 rsync 同步：
 
 - 服务器副本：60 个文件 / 约 4.0 MB；
-- 本地当前：45 个文件（之后修复了 IEMOCAP extractor、删除了 11 个上游文件/配置并更新了文档）；
+- 本地之后已更新：修复了 IEMOCAP extractor、清理了失效的上游脚本/配置/评测代码、更新了文档；不要用文件数判断是否一致，训练前重新 rsync；
 - 排除 `datasets/`、`checkpoints/`、`results/`、`.git/`、缓存和备份目录；
 - 服务器这份不是 git 仓库，不能 `git pull`；
 - 属主已归一为 `root:root`，`GPU-RUNBOOK.md` 权限 644；

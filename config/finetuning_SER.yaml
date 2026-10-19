@@ -19,11 +19,13 @@ checkpoint:
 
 task:
   _name: mae_image_classification
-  data: /root/songhao/datasets/SER_DATASET/manifests/ravdess-speech/fold_00
+  # Required: tools/ser_protocol.py sets this per dataset/fold.
+  data: ???
   downsr_16hz: true
   audio_mae: true
   single_label: true
-  target_length: 512
+  # Required: tools/ser_protocol.py sets this per dataset.
+  target_length: ???
   roll_aug: false
   noise: false
   h5_format: false
@@ -79,12 +81,15 @@ lr_scheduler: pass_through
 
 model:
   _name: mae_image_classification
+  # Required: tools/ser_protocol.py sets the pretrained checkpoint.
   model_path: ???
   audio_mae: true
   single_label: true
-  num_classes: 8
+  # Required: tools/ser_protocol.py sets this per dataset.
+  num_classes: ???
   prediction_mode: PredictionMode.CLS_TOKEN
-  target_length: 512
+  # Required: tools/ser_protocol.py sets this per dataset.
+  target_length: ???
   mixup: 0.0
   specaug: false
   label_smoothing: 0.0
