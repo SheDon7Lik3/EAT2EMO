@@ -15,7 +15,7 @@ Internal project: EAT audio encoder + Speech Emotion Recognition (SER) fine-tuni
 - 基于 [EAT](https://github.com/cwx-worst-one/EAT) 的音频自监督编码器，使用 EAT-base epoch30 预训练权重。
 - 在本仓库中增加了 SER 微调协议：EMO-DB、IEMOCAP-5531、RAVDESS-Speech、RAVDESS-Song，支持 nested / fixed 两种协议。
 - 训练、评测、汇总的入口在 `scripts/`、`tools/`、`evaluation/`；具体约定见 SER 指南。
-- AudioSet 预训练、AS-2M/AS-20K/ESC-50/SPC-2 微调和 AudioSet 推理仍以上游 EAT 仓库为准。
+- AudioSet 预训练、AS-2M/AS-20K/ESC-50/SPC-2 微调和 AudioSet 推理仍以上游 EAT 仓库为准；本仓库不再保留这些上游启动脚本和配置。
 
 ## Requirements and Installation
 
@@ -87,7 +87,7 @@ bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 - 论文：[EAT: Self-Supervised Pre-Training with Efficient Audio Transformer](https://arxiv.org/abs/2401.03497)
 - 上游代码：[cwx-worst-one/EAT](https://github.com/cwx-worst-one/EAT)
 - Hugging Face：[EAT collection](https://huggingface.co/collections/worstchan/eat-6815b4f1034f5214f9063948)
-- 上游预训练/微调、AudioSet 数据准备、AudioSet 推理与 mAP 评测，请直接使用上游仓库；本仓库聚焦 SER。
+- 上游预训练/微调、AudioSet 数据准备、AudioSet 推理与 mAP 评测，请直接使用上游仓库；本仓库聚焦 SER，已移除这些上游启动脚本和配置。
 
 常用 checkpoint：
 
