@@ -18,6 +18,7 @@ conversion; the manifest generator will still reject non-protocol counts.
 import argparse
 import csv
 import re
+import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
@@ -143,6 +144,17 @@ def write_audio(shards: list[Path], records: list[dict], output: Path) -> None:
         raise ValueError(f"Audio missing for {len(missing)} utterances: {missing[:5]}")
 
 
+def clear_generated_output(output: Path) -> None:
+    """Remove only files/directories produced by a previous run of this tool."""
+
+    metadata = output / "metadata.csv"
+    if metadata.is_file():
+        metadata.unlink()
+    for child in output.iterdir():
+        if child.is_dir() and child.name.startswith("Session"):
+            shutil.rmtree(child)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, help="directory containing *.parquet shards")
@@ -179,6 +191,9 @@ def main() -> None:
             f"Kept {len(records)} utterances, expected {args.expected_samples}. "
             f"Skipped emotions: {skipped_text or 'none'}"
         )
+
+    if args.output.exists() and args.overwrite:
+        clear_generated_output(args.output)
 
     args.output.mkdir(parents=True, exist_ok=True)
     write_audio(shards, records, args.output)

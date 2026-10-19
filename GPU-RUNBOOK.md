@@ -1,6 +1,6 @@
 # EAT2EMO GPU 运行手册
 
-本文记录 EAT2EMO 在 GPU 服务器上的实际入口、固定资源、已完成的部署/环境状态和运行步骤。它是操作说明，不是“已训练完成”的证明。2026-10-19 的进展：代码已由本地 rsync 部署到服务器，`eat2emo` 环境已创建并通过预检；**manifest 尚未生成，训练尚未启动**。本文只描述操作，不把未执行的步骤写成已完成。本次文档更新只改本地文件，未再连接或修改服务器。
+本文记录 EAT2EMO 在 GPU 服务器上的实际入口、固定资源、已完成的部署/环境状态和运行步骤。它是操作说明，不是“已训练完成”的证明。2026-10-19 的进展：代码已由本地 rsync 部署到服务器，`eat2emo` 环境已创建并通过预检；**manifest 尚未生成，训练尚未启动**。注意：服务器代码是**早期同步版本**；之后本地修复了 IEMOCAP extractor、删除了 11 个上游文件/配置并更新了文档，服务器副本尚未重新同步。
 
 ## 文档分工
 
@@ -20,10 +20,10 @@
 ### 1.1 一句话结论
 
 - ✅ **数据与预训练权重已就绪**：`SER_DATASET` 四个子集数量和布局与协议一致，权重与本地文件 SHA256 相同。
-- ✅ **代码已部署**：`/root/songhao/ProJ/EAT2EMO`，2026-10-19 由本地 rsync 同步；60 files / 约 4.0 MB，排除 `datasets/`、`checkpoints/`、`results/`、`.git/`；服务器这份不是 git 仓库。
+- ⚠️ **代码副本已部署但已过期**：服务器 `/root/songhao/ProJ/EAT2EMO` 是 2026-10-19 早期 rsync 副本（60 files / 约 4.0 MB，无 `.git`）；本地之后修复了 IEMOCAP extractor、删除了 11 个上游文件/配置并更新了文档，当前本地为 45 files。**训练前需要重新 rsync。**
 - ✅ **`eat2emo` 环境已验证**：Python 3.10.20、torch 2.1.2+cu121、numpy 1.26.3、sklearn 1.3.2、fairseq 0.12.2、timm 0.9.12、transformers 4.51.3；`pip check` 无 broken requirements。旧 `emoat` 保留作回退。
 - ⏳ **Manifest 与实验输出尚未生成**：`SER_DATASET/manifests` 和 `/root/songhao/experiments/EAT2EMO` 都还不存在。
-- ⚠️ **Git 同步仍未完成**：GitHub 远端 HEAD 是 `3c1fe37`，本地 HEAD 是 `1432dae`（ahead 1），工作区仍有未提交改动；服务器当前是 rsync 副本，不能 `git pull`。长期更新仍需 commit/push 或重新 rsync。
+- ✅ **Git 同步已完成**：本地 `main` 与 GitHub `origin/main` 一致、工作区 clean；服务器仍是早期 rsync 副本，不能 `git pull`，训练前需重新 rsync 或按 §3.2 切回 Git。
 
 当前环境与代码已经就绪，但训练前仍必须先完成：生成 manifest（§5）→ dry-run/smoke（§6）→ 再正式批量（§7）。
 
@@ -38,14 +38,14 @@
 | GPU | 1 × NVIDIA GeForce RTX 4090，24564 MiB，driver 595.71.05 | ✅ 检查时 0% 利用率、无计算进程 |
 | CPU / 内存 | 88 vCPU / 550 GiB；load average 76.86（检查时） | ⚠️ 共享主机，跑前用 `uptime` 复查 |
 | 磁盘 | `/root` 7.3T，已用 383G，可用 6.9T；inode 使用 4% | ✅ |
-| 代码目录 | `/root/songhao/ProJ/EAT2EMO`，rsync 副本（60 files / 4.0MB，无 `.git`） | ✅ 已部署 |
+| 代码目录 | `/root/songhao/ProJ/EAT2EMO`，早期 rsync 副本（服务器 60 files / 4.0MB；本地已更新为 45 files，未同步） | ⚠️ 需重新 rsync |
 | conda 环境 | `/root/miniconda3/envs/eat2emo`，Python 3.10.20；旧 `emoat` 保留作回退 | ✅ 已验证（§4.2） |
 | Fairseq | `/root/songhao/ProJ/fairseq`，0.12.2，HEAD `3d262bb2`，`import fairseq` 已验证 | ✅ |
 | 预训练权重 | `/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_pt.pt`，1.4G | ✅ SHA256 见 §1.3 |
 | 数据根 | `/root/songhao/datasets/SER_DATASET` | ✅ 535 / 5531 / 1440 / 1012 |
 | Manifest | `/root/songhao/datasets/SER_DATASET/manifests` | ⏳ 不存在，待生成 |
 | 实验输出 | `/root/songhao/experiments/EAT2EMO` | ⏳ 不存在，首次运行会创建 |
-| GitHub | `https://github.com/SheDon7Lik3/EAT2EMO.git`，HTTP 200，服务器可 `ls-remote` | ⚠️ 远端 `3c1fe37`；本地 `1432dae` + 未提交改动；服务器当前为 rsync 副本 |
+| GitHub | `https://github.com/SheDon7Lik3/EAT2EMO.git`，HTTP 200，服务器可 `ls-remote` | ✅ 本地 `main` 与 `origin/main` 一致；服务器为过期 rsync 副本 |
 | 后台工具 | `screen` 4.09、`rsync`、`git`、`curl`、`sha256sum` 可用；`tmux` 缺失 | ✅ 用 `screen` 或 `nohup` |
 | 系统默认 python | `/root/miniconda3/bin/python` 是 3.13.13 | ⚠️ 不要用它跑本项目，必须显式用 eat2emo |
 
@@ -125,14 +125,15 @@ df -h /root
 
 ### 3.1 当前部署方式（2026-10-19）
 
-服务器 `/root/songhao/ProJ/EAT2EMO` 是本地工作区的代码副本，由 rsync 同步：
+服务器 `/root/songhao/ProJ/EAT2EMO` 是本地工作区的**早期**代码副本，由 rsync 同步：
 
-- 60 个文件 / 约 4.0 MB；
+- 服务器副本：60 个文件 / 约 4.0 MB；
+- 本地当前：45 个文件（之后修复了 IEMOCAP extractor、删除了 11 个上游文件/配置并更新了文档）；
 - 排除 `datasets/`、`checkpoints/`、`results/`、`.git/`、缓存和备份目录；
 - 服务器这份不是 git 仓库，不能 `git pull`；
 - 属主已归一为 `root:root`，`GPU-RUNBOOK.md` 权限 644；
-- 代码文件 SHA256 与本地一致：`requirements.txt`、`tools/ser_protocol.py`、`scripts/run_all_SER.sh`；
-- 本次文档更新（`GPU-RUNBOOK.md`、`ENVIRONMENT.md`）只改本地，服务器上仍是同步时的旧版；不影响代码运行，需要时再单独 rsync 这两个文件。
+- 同步时的 `requirements.txt`、`tools/ser_protocol.py`、`scripts/run_all_SER.sh` SHA256 与本地一致，但 `tools/extract_iemocap_parquet.py` 和文档之后已更新；
+- 训练前必须重新 rsync，确认服务器与本地 HEAD 一致。
 
 更新代码时从本地重新 rsync，不要把数据/权重带上去：
 
@@ -173,10 +174,9 @@ GitHub 仍是长期代码源：`https://github.com/SheDon7Lik3/EAT2EMO.git`。
 当前状态（2026-10-19）：
 
 ```text
-GitHub origin/main: 3c1fe37
-本地 HEAD:          1432dae (ahead 1)
-本地工作区:         仍有未提交改动
-服务器:             rsync 副本，无 .git
+GitHub origin/main: 最新提交（见 git log；已包含 SER 协议、extractor 修复、文档和上游清理）
+本地 HEAD:          与 origin/main 一致，工作区 clean
+服务器:             早期 rsync 副本，无 .git，需重新同步
 ```
 
 如果要切回 Git：
@@ -628,19 +628,21 @@ $PYTHON_BIN evaluation/summarize_ser.py \
 
 已完成（2026-10-19）：
 
-- [x] 代码从本地 rsync 到 `/root/songhao/ProJ/EAT2EMO`（60 files / 4.0MB，无 `.git`，代码文件 SHA256 已核对；本次文档更新未同步）；
+- [x] 本地 commit/push 已完成（SER 协议、IEMOCAP extractor 修复、文档、上游文件清理）；
+- [x] 早期代码已 rsync 到 `/root/songhao/ProJ/EAT2EMO`（服务器 60 files / 4.0MB，无 `.git`）；**但副本已过期，训练前需重新同步**；
 - [x] 新建 `eat2emo` 环境并完成 §4.2 预检（torch / numpy / sklearn / fairseq / timm / transformers；`pip check` 无 broken requirements）；
 - [x] 旧 `emoat` 保留，未删除。
 
 尚未执行：
 
+- [ ] 重新 rsync 服务器代码，使服务器与本地 HEAD 一致；
 - [ ] 生成 4 套 manifest（§5.2），核对 counts / `split.json` audits；
 - [ ] nested dry-run + smoke（1 fold、1 epoch）；
 - [ ] fixed dry-run + smoke（1 fold、1 epoch）；
 - [ ] 1 个正式 fold，记录实际 epoch 时间与显存占用；
 - [ ] 正式批量（§7.2）；
 - [ ] 汇总并核对 `summary.json`；
-- [ ] （长期）本地 commit/push，服务器从 rsync 副本切到 Git（§3.2）。
+- [ ] （长期）服务器从 rsync 副本切到 Git（§3.2）。
 
 本轮未验证：
 

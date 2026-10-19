@@ -30,6 +30,8 @@ export PYTHONDONTWRITEBYTECODE=1
 
 默认预训练权重为 `/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_pt.pt`，可用 `SER_PRETRAINED` 覆盖。
 
+> 本仓库 `datasets/` 下的本地数据和 `datasets/manifests/*` 是旧 `train/eval/test` 快照，不是当前 nested/fixed 协议的输入；正式流程只使用服务器 `SER_DATASET`。
+
 ## 3. 生成并审计 manifests
 
 ```bash

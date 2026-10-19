@@ -196,7 +196,7 @@ nvidia-smi
 | soundfile / pyarrow / h5py | 0.12.1 / 15.0.0 / 3.10.0 |
 | scipy | 1.15.3 |
 | `pip check` | `No broken requirements found`（omegaconf deprecation 警告除外） |
-| 代码目录 | `/root/songhao/ProJ/EAT2EMO`（rsync 副本，无 `.git`，约 4.0MB） |
+| 代码目录 | `/root/songhao/ProJ/EAT2EMO`（早期 rsync 副本，无 `.git`；本地之后有 extractor 修复/上游文件删除，尚未重新同步） |
 | 数据根 | `/root/songhao/datasets/SER_DATASET`（535 / 5531 / 1440 / 1012） |
 | 预训练权重 | `/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_pt.pt`（1.4G，SHA256 `91228f59...03816`） |
 | manifest / 实验输出 | 尚未生成 |
@@ -204,4 +204,4 @@ nvidia-smi
 
 构建与验证记录见 [GPU-RUNBOOK.md](GPU-RUNBOOK.md) 的 §4。
 
-> 本文于 2026-10-19 在本地更新；服务器上的 `ENVIRONMENT.md` 仍是同步时的旧版，本轮未再修改服务器。
+> 本文于 2026-10-19 在本地更新；服务器上的 `ENVIRONMENT.md` 和代码副本仍是早期版本，本地后续的 extractor 修复/文件删除尚未同步。

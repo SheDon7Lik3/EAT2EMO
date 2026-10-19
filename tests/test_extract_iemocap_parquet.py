@@ -145,6 +145,49 @@ class ExtractIemocapParquetTest(unittest.TestCase):
             self.assertIn("Kept 2 utterances, expected 3", str(raised.exception))
             self.assertFalse(output.exists())
 
+    def test_overwrite_removes_stale_generated_files(self):
+        first_rows = ROWS[:2]
+        second_rows = [
+            {
+                "file": "audio/Session1/Ses01F_impro01_F000.wav",
+                "major_emotion": "sad",
+                "audio": {"bytes": b"RIFF-replaced"},
+            }
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "parquet"
+            source.mkdir()
+            (source / "part-0.parquet").touch()
+            output = root / "IEMOCAP-5531"
+
+            argv = ["extract_iemocap_parquet.py", str(source), "--output", str(output), "--expected-samples", "2"]
+            with mock.patch.object(extractor, "iter_rows", side_effect=lambda _: iter(first_rows)):
+                with mock.patch.object(sys, "argv", argv):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        extractor.main()
+
+            argv = [
+                "extract_iemocap_parquet.py",
+                str(source),
+                "--output",
+                str(output),
+                "--expected-samples",
+                "1",
+                "--overwrite",
+            ]
+            with mock.patch.object(extractor, "iter_rows", side_effect=lambda _: iter(second_rows)):
+                with mock.patch.object(sys, "argv", argv):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        extractor.main()
+
+            self.assertTrue((output / "Session1" / "Ses01F_impro01_F000.wav").is_file())
+            self.assertEqual(
+                (output / "Session1" / "Ses01F_impro01_F000.wav").read_bytes(),
+                b"RIFF-replaced",
+            )
+            self.assertFalse((output / "Session1" / "Ses01F_impro01_M000.wav").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
