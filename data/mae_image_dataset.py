@@ -125,13 +125,16 @@ class MaeImageDataset(FairseqDataset):
         # load wav files
         mask_args = {}
         if self.audio_mae:
-            min_sample_size = 10000 
+            # SER manifests are audited up front and every listed utterance must
+            # participate in its fold.  In particular, do not silently discard
+            # short (but otherwise valid) recordings here.
+            min_sample_size = 0
             
             input_size = (self.target_length,128)
             manifest_path = os.path.join(root, "{}.tsv".format(split))     
             self.dataset = FileAudioDataset(
                     manifest_path=manifest_path,
-                    sample_rate=32000,
+                    sample_rate=16000 if self.downsr_16hz else 32000,
                     max_sample_size=325000,
                     min_sample_size=min_sample_size,
                     pad=False,
@@ -262,7 +265,8 @@ class MaeImageDataset(FairseqDataset):
     def ordered_indices(self):
         """Return an ordered list of indices. Batches will be constructed based
         on this order."""
-        if self.shuffle and (self.AS2M_finetune or self.spcv1_finetune) and self.split == "train" :
+        is_train_split = self.split in {"train", "inner_train"}
+        if self.shuffle and (self.AS2M_finetune or self.spcv1_finetune) and is_train_split:
             weights = np.loadtxt(self.weights_file)
             normalized_weights = weights / np.sum(weights)
             weights_tensor = torch.from_numpy(normalized_weights)
@@ -273,7 +277,7 @@ class MaeImageDataset(FairseqDataset):
             # order = [np.random.choice(order[0], size=len(self), replace=True, p=weights)]
             return order
         
-        elif self.shuffle and self.split == "train":
+        elif self.shuffle and is_train_split:
             order = [np.random.permutation(len(self))]
             return order[0]
 

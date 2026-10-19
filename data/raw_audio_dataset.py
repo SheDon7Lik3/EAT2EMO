@@ -7,7 +7,6 @@
 import logging
 import os
 import sys
-import time
 import io
 import h5py
 
@@ -28,6 +27,9 @@ from fairseq.data.text_compressor import TextCompressor, TextCompressionLevel
 
 logger = logging.getLogger(__name__)
 
+AUDIOSET_MEAN = -4.268
+AUDIOSET_STD = 4.569
+SER_SAMPLE_RATE = 16000
 
 
 class RawAudioDataset(FairseqDataset):
@@ -293,6 +295,7 @@ class FileAudioDataset(RawAudioDataset):
         self.roll_mag_aug = roll_mag_aug
         self.noise = noise
         self.train_mode = train_mode
+        self.is_train_split = train_mode in {"train", "inner_train"}
 
         skipped = 0
         self.fnames = []
@@ -372,41 +375,47 @@ class FileAudioDataset(RawAudioDataset):
             assert is_sf_audio_data(byte_data)
             path_or_fp = io.BytesIO(byte_data)
 
-        retry = 3
-        wav = None
-        for i in range(retry):
-            try:
-                if self.h5_format and self.train_mode == 'train':
-                    parts = path_or_fp.split("/")
-                    path_or_fp = "/".join(parts[:-1])
-                    path_or_fp = h5py.File(path_or_fp,'r')
-                    wav = path_or_fp[parts[-1]][:]
-                    curr_sample_rate = 32000
-                    break                    
-                else:
-                    wav, curr_sample_rate = sf.read(path_or_fp, dtype="float32")
-                    break
-            except Exception as e:
-                logger.warning(
-                    f"Failed to read {path_or_fp}: {e}. Sleeping for {1 * i}"
-                )
-                time.sleep(1 * i)
-
-        if wav is None:
-            raise Exception(f"Failed to load {path_or_fp}")
+        try:
+            if self.h5_format and self.is_train_split:
+                parts = path_or_fp.split("/")
+                h5_path = "/".join(parts[:-1])
+                with h5py.File(h5_path, "r") as h5_file:
+                    wav = h5_file[parts[-1]][:]
+                curr_sample_rate = 32000
+            else:
+                wav, curr_sample_rate = sf.read(path_or_fp, dtype="float32")
+        except Exception as exc:
+            raise RuntimeError(f"Failed to load audio {path_or_fp}: {exc}") from exc
 
         if self.h5_format:
             feats = torch.tensor(wav).float()
         else:
             feats = torch.from_numpy(wav).float()
-            
+
+        if feats.ndim == 2:
+            # soundfile returns [time, channels]; downmix before resampling so
+            # torchaudio always sees the time axis in the last dimension.
+            feats = feats.mean(dim=-1)
+        if feats.ndim != 1:
+            raise ValueError(
+                f"Audio {path_or_fp} has unsupported waveform shape {tuple(feats.shape)}"
+            )
+        if feats.numel() == 0:
+            raise ValueError(f"Audio {path_or_fp} is empty")
+        if not torch.isfinite(feats).all():
+            raise ValueError(f"Audio {path_or_fp} contains NaN or Inf")
+        if not isinstance(curr_sample_rate, (int, np.integer)) or curr_sample_rate <= 0:
+            raise ValueError(f"Audio {path_or_fp} has invalid sample rate {curr_sample_rate}")
+
         if self.downsr_16hz:
-            feats = torchaudio.functional.resample(feats, orig_freq=curr_sample_rate, new_freq=16000)
-            curr_sample_rate = 16000
-            self.sample_rate = curr_sample_rate
+            if curr_sample_rate != SER_SAMPLE_RATE:
+                feats = torchaudio.functional.resample(
+                    feats, orig_freq=curr_sample_rate, new_freq=SER_SAMPLE_RATE
+                )
+            curr_sample_rate = SER_SAMPLE_RATE
             
         # whether to use roll augmentation on waveform
-        use_roll = self.roll_mag_aug and self.train_mode == 'train'
+        use_roll = self.roll_mag_aug and self.is_train_split
         
         feats = self.postprocess(feats, curr_sample_rate, use_roll)
 
@@ -427,8 +436,8 @@ class FileAudioDataset(RawAudioDataset):
                 feats = feats[:,0:self.target_length,:]     
                 
             # global normalization for AS
-            self.norm_mean = -4.268 
-            self.norm_std = 4.569
+            self.norm_mean = AUDIOSET_MEAN
+            self.norm_std = AUDIOSET_STD
             
             # global normalization for ESC-50
             if self.esc50_eval:
@@ -442,7 +451,7 @@ class FileAudioDataset(RawAudioDataset):
                 
             feats = (feats - self.norm_mean) / (self.norm_std * 2) 
             
-            if self.noise and self.train_mode == 'train': 
+            if self.noise and self.is_train_split:
                 feats = feats + torch.rand(feats.shape[1], feats.shape[2]) * np.random.rand() / 10
                 feats = torch.roll(feats, np.random.randint(-10, 10), 1)
 

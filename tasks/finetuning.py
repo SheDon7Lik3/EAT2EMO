@@ -169,14 +169,23 @@ class MaeImageClassificationTask(MaeImagePretrainingTask):
             def score(meters, metric):
                 y_pred = meters["_predictions"].tensor.numpy()
                 y_true = meters["_targets"].tensor.numpy()
+                present_classes = np.unique(y_true)
                 if metric == "accuracy":
                     return 100.0 * sklearn_metrics.accuracy_score(y_true, y_pred)
                 if metric == "uar":
                     return 100.0 * sklearn_metrics.recall_score(
-                        y_true, y_pred, average="macro", zero_division=0
+                        y_true,
+                        y_pred,
+                        labels=present_classes,
+                        average="macro",
+                        zero_division=0,
                     )
                 return 100.0 * sklearn_metrics.f1_score(
-                    y_true, y_pred, average="macro", zero_division=0
+                    y_true,
+                    y_pred,
+                    labels=present_classes,
+                    average="macro",
+                    zero_division=0,
                 )
 
             metrics.log_derived("accuracy", lambda meters: score(meters, "accuracy"))

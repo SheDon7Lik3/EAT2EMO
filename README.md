@@ -1,247 +1,115 @@
-<!-- omit in toc -->
-# EAT: Self-Supervised Pre-Training with Efficient Audio Transformer
-[![Python](https://img.shields.io/badge/Python-3.8%2B-orange?logo=python)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-1.13%2B-brightgreen?logo=pytorch)](https://pytorch.org/)
-[![Fairseq](https://img.shields.io/badge/Fairseq-0.12.2-blue)](https://github.com/facebookresearch/fairseq)
-[![🤗 EAT on HuggingFace](https://img.shields.io/badge/HuggingFace-EAT-yellow?logo=huggingface)](https://huggingface.co/collections/worstchan/eat-6815b4f1034f5214f9063948)
-[![arXiv](https://img.shields.io/badge/arXiv-2401.03497-blueviolet?logo=arxiv)](https://arxiv.org/abs/2401.03497)
-[![License](https://img.shields.io/badge/License-MIT-red.svg)](https://github.com/cwx-worst-one/EAT)
+# EAT2EMO
 
+Internal project: EAT audio encoder + Speech Emotion Recognition (SER) fine-tuning.
 
-**Guides**
-- [Requirements and Installation](#requirements-and-installation)
-- [Model Checkpoints](#model-checkpoints)
-- [Feature Extraction](#feature-extraction)
-- [Data Preparation](#data-preparation)
-- [Pre-Training](#pre-training)
-- [Fine-Tuning](#fine-tuning)
-- [Inference and Evaluation](#inference-and-evaluation)
+**Documentation**
 
+| 文档 | 负责内容 |
+|---|---|
+| [ENVIRONMENT.md](./ENVIRONMENT.md) | 环境安装、版本固定、当前 `eat2emo` 服务器实况 |
+| [SER_FINETUNE_GUIDE.md](./SER_FINETUNE_GUIDE.md) | SER 协议、单 fold/批量命令、指标口径 |
+| [GPU-RUNBOOK.md](./GPU-RUNBOOK.md) | GPU 服务器连接、rsync 部署、运行、smoke 与排障 |
 
-<!-- omit in toc -->
-## News 🔥
-- [Update May. 3, 2025] 🎉🎉🎉 EAT now supports **[Hugging Face integration](https://huggingface.co/collections/worstchan/eat-6815b4f1034f5214f9063948)**! You can extract features or run inference **without relying on Fairseq** — try EAT as your new audio encoder today!
-- We release **EAT-large** (20 epochs) with SOTA performance on AS-2M, AS-20K, ESC-50 and SPC-2. 
-- Checkpoints and code are updated — EAT now seamlessly supports **variable-length** audio across training, extraction, inference, and evaluation.
+## What this repo is
 
-
-<!-- omit in toc -->
-## Introduction 
-EAT is an audio SSL model with high effectiveness and efficiency during self-supervised pre-training. You can find details in the paper [EAT: Self-Supervised Pre-Training with Efficient Audio Transformer](https://arxiv.org/abs/2401.03497). 
-
+- 基于 [EAT](https://github.com/cwx-worst-one/EAT) 的音频自监督编码器，使用 EAT-base epoch30 预训练权重。
+- 在本仓库中增加了 SER 微调协议：EMO-DB、IEMOCAP-5531、RAVDESS-Speech、RAVDESS-Song，支持 nested / fixed 两种协议。
+- 训练、评测、汇总的入口在 `scripts/`、`tools/`、`evaluation/`；具体约定见 SER 指南。
+- AudioSet 预训练、AS-2M/AS-20K/ESC-50/SPC-2 微调和 AudioSet 推理仍以上游 EAT 仓库为准。
 
 ## Requirements and Installation
-The recommended environment is `Python 3.10` with CUDA 12.1 PyTorch wheels.
 
-We now support **[Hugging Face integration](https://huggingface.co/collections/worstchan/eat-6815b4f1034f5214f9063948)** — if you're only performing **feature extraction or inference**, you no longer need to install Fairseq!
+推荐 Python 3.10 + CUDA 12.1 PyTorch。完整安装步骤、固定版本和当前服务器环境见 [ENVIRONMENT.md](./ENVIRONMENT.md)。
 
-
-### 🔵 For pre-training or fine-tuning (Fairseq-based)
-Create a dedicated conda environment first:
-
-```shell
-conda create -n emoat python=3.10 -y
-conda activate emoat
-
-pip install \
-  torch==2.1.2 \
-  torchvision==0.16.2 \
-  torchaudio==2.1.2 \
-  --index-url https://download.pytorch.org/whl/cu121 \
-  --timeout 1000 \
-  --retries 10
-
-python -m pip install pip==24.0
-pip install \
-  setuptools==69.5.1 \
-  numpy==1.26.3 \
-  wheel \
-  cython
-
-git clone https://github.com/pytorch/fairseq
-cd ~/songhao/ProJ/fairseq
-pip install --editable ./ --no-build-isolation
-
-cd /path/to/EAT
-pip install timm==0.9.12 --no-deps
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-```
-
-### 🟡 For feature extraction or inference only (Hugging Face)
-No Fairseq needed. Simply install the project dependencies:
-```shell
-conda create -n emoat python=3.10 -y
-conda activate emoat
-pip install -r requirements.txt
-```
-
-
-## Model Checkpoints
-We provide several checkpoints for download, including both the original paper version and enhanced variants.
-
-
-### 🔹 EAT-base (introduced in paper; for efficient pre-training)
-
-- [Pre-trained (10 epochs)](https://drive.google.com/file/d/10pklbY_fKraQUIBizSg1kv4lJXNWxpxl/view?usp=sharing)
-- [Fine-tuned on AS-2M](https://drive.google.com/file/d/1F07zN8N54rXU-szvKUlYaCFMCepc4wHR/view?usp=sharing)
-- [Fine-tuned on AS-20K](https://drive.google.com/file/d/1fRX_Mgj4sHxV2F6AVfoqXObfgzFMnHRA/view?usp=sharing)
-
-
-### 🔹 Updated & Recommended Versions
-These enhanced versions feature extended pre-training or larger backbones. 
-- Checkpoints via **Google Drive** are compatible with Fairseq for further pre-training or fine-tuning.  
-- **Hugging Face versions** support direct usage via `AutoModel.from_pretrained` for feature extraction or inference.
-
-| Version| 📦 Google Drive| 🤗 Hugging Face|
-|------------| :------------: | :--------: |
-| EAT-base (Epoch 30, Pre-trained)| [Link](https://drive.google.com/file/d/19hfzLgHCkyqTOYmHt8dqVa9nm-weBq4f/view?usp=sharing) | [Link](https://huggingface.co/worstchan/EAT-base_epoch30_pretrain)       |
-| EAT-base (Epoch 30, Fine-tuned on AS-2M)| [Link](https://drive.google.com/file/d/1aCYiQmoZv_Gh1FxnR-CCWpNAp6DIJzn6/view?usp=sharing) | [Link](https://huggingface.co/worstchan/EAT-base_epoch30_finetune_AS2M)  |
-| EAT-large (Epoch 20, Pre-trained)| [Link](https://drive.google.com/file/d/1PEgriRvHsqrtLzlA478VemX7Q0ZGl889/view?usp=sharing) | [Link](https://huggingface.co/worstchan/EAT-large_epoch20_pretrain)      |
-| EAT-large (Epoch 20, Fine-tuned on AS-2M) | [Link](https://drive.google.com/file/d/1b_f_nQAdjM1B6u72OFUtFiUu-4yM2shd/view?usp=sharing) | [Link](https://huggingface.co/worstchan/EAT-large_epoch20_finetune_AS2M) |
-
-
-> 🧠 [Browse collection on Hugging Face](https://huggingface.co/collections/worstchan/eat-6815b4f1034f5214f9063948)  
-> ⚠️ Note: Due to our limited AudioSet subset compared to other models, we **recommend** pre-training EAT on your own data for better performance.
-
-
-### 📈 Performance Summary 
-| Model      | Backbone | Params | Pre-train Epochs | AS-20K mAP (%) | AS-2M mAP (%) |
-|:-:|:-:|:-:|:-:|:-:|:-:|
-|EAT-base|ViT-B|88M|10|40.3 | 48.6|
-|EAT-base|ViT-B|88M|30|41.3 | 48.9|
-|EAT-large|ViT-L|309M|20|**42.0** | **49.5**|
-
+服务器上的代码同步、环境预检和运行入口见 [GPU-RUNBOOK.md](./GPU-RUNBOOK.md)。
 
 ## Feature Extraction
-We provide a simple script to extract audio features from the last layer of the EAT encoder. You can run feature extraction using either a **Fairseq checkpoint** or a **Hugging Face model**.  
 
-To get started, simply run:
-```bash
-bash EAT/scripts/feature_extract.sh 
-``` 
+`feature_extract/feature_extract.py` 从冻结的 EAT 编码器提取特征并保存为 `.npy`，支持 Fairseq checkpoint 或 Hugging Face 模型。
 
-For more detailed instructions, see the [feature extraction guide](./feature_extract/readme.md).
-
-
-## Data Preparation
-The main dataset in our experiment is [AudioSet](https://research.google.com/audioset/). Regrettably, we are unable to distribute the original audio files due to copyright restrictions. 
-
-However, you can access our **data manifest** [here](https://drive.google.com/file/d/1LH2C0q3d4zndoR3-oGkVdYYqDCIdxIsm/view?usp=drive_link), which provides metadata and paths necessary for processing. We follow the file format in [wav2vec](https://github.com/facebookresearch/fairseq/tree/main/examples/wav2vec) and [data2vec](https://github.com/facebookresearch/fairseq/tree/main/examples/data2vec), where `.tsv` format file is for index while `.lbl` and `.csv` format files are specific for classification task.  You are free to modify the files to suit your own datasets or experimental needs.
-
-
-## Pre-Training 
-Our codes are adapted from [Audio-MAE](https://github.com/facebookresearch/AudioMAE) and [data2vec](https://github.com/facebookresearch/fairseq/tree/main/examples/data2vec). The default configuration file for pre-training is `pretraining_AS2M.yaml`. To pre-train the EAT model on AudioSet, simply run the following script:
-```bash
-bash EAT/scripts/pretraining_AS2M.sh 
-``` 
-If you wish to pre-train the model on a different dataset where audio clips are **not fixed to 10 seconds**, please refer to the [feature extraction guide](./feature_extract/readme.md) for detailed instructions on how to adjust the target length accordingly.
-
-
-## Fine-Tuning
-We use `finetuning.yaml` as the default configuration file for fine-tuning. To fine-tune the EAT model in different downstream tasks, you could run the script `finetuning_{task}.sh`, where `{task}` refers to one of the supported datasets, including `AS20K`, `AS2M`, `ESC50`, and `SPCv2`. For example, you can fine-tune EAT on `AS20K` by executing: 
-```bash
-bash EAT/scripts/finetuning_AS20K.sh
-``` 
-
-### Speech Emotion Recognition
-
-SER fine-tuning uses the original EAT encoder with CLS-token classification and
-speaker-independent manifests under `/root/songhao/datasets/ser_datasets/manifests`.
-Set `FAIRSEQ_ROOT` to the Fairseq source checkout, then train and evaluate one fold:
+Hugging Face checkpoint、utterance-level CLS 特征示例（确保 `PYTHON_BIN` 指向 `eat2emo` 环境，见 [ENVIRONMENT.md](./ENVIRONMENT.md)）：
 
 ```bash
-export FAIRSEQ_ROOT=/path/to/fairseq
-export SER_DATA_ROOT=/root/songhao/datasets/ser_datasets
-export CHECKPOINT_ROOT=/root/songhao/datasets/checkpoints
-bash scripts/finetuning_SER.sh ravdess fold_01
-bash scripts/eval_SER.sh ravdess fold_01
+$PYTHON_BIN feature_extract/feature_extract.py \
+  --source_file feature_extract/test.wav \
+  --target_file feature_extract/test.npy \
+  --model_dir . \
+  --checkpoint_dir worstchan/EAT-base_epoch30_finetune_AS2M \
+  --granularity utterance \
+  --target_length 1024 \
+  --mode finetune \
+  --framework huggingface
 ```
 
-By default, training loads `/root/songhao/datasets/checkpoints/EAT-base_epoch30_pt.pt`. Pass another
-checkpoint as the third argument to override it.
+使用 Fairseq checkpoint 时改为 `--framework fairseq --checkpoint_dir /path/to/checkpoint.pt`，并保留 `--model_dir .`。完整参数见 [feature_extract/feature_extract.py](./feature_extract/feature_extract.py)。
 
-After evaluating every fold, aggregate the results with:
+**Notes**
 
-```bash
-python evaluation/summarize_ser.py /root/songhao/datasets/checkpoints/ser/ravdess
-```
+- 提取的是冻结 EAT 编码器的特征，帧级特征约 50 Hz。
+- `--granularity`：`all`（帧级，含 CLS）、`frame`（帧级，不含 CLS）、`utterance`（只保留 CLS，分类任务通常优先）。
+- `target_length`：10 秒音频用 `1024`，5 秒用 `512`；EAT 预训练使用 10 秒 AudioSet 片段，建议尽量 pad/trim 到 10 秒。
+- CNN 编码器使用 16×16 patch、stride 16，因此 `target_length` 必须是 **16 的倍数**。
+- 预训练 checkpoint 适合再微调；微调后的 checkpoint 通常更适合直接提特征。
 
+## Speech Emotion Recognition
 
-## Inference and Evaluation
-We support both local inference and loading models via Hugging Face. To run inference on a single AudioSet audio clip using fine-tuned EAT models, you may use our checkpoint fine-tuned on [AS-2M](https://drive.google.com/file/d/1F07zN8N54rXU-szvKUlYaCFMCepc4wHR/view?usp=sharing) (recommended) or [AS-20K](https://drive.google.com/file/d/1fRX_Mgj4sHxV2F6AVfoqXObfgzFMnHRA/view?usp=sharing). Alternatively, you can load the models directly from Hugging Face.
+SER 使用 EAT 编码器的 CLS token 做单标签分类，数据划分为 speaker/session-independent。支持：
 
-To start inference, run: 
-```bash
-bash EAT/scripts/inference.sh 
-``` 
-An example output is as follows:
-```
-# top_k_prediction = 12
-************ Acoustic Event Inference ************
-LABEL                          PREDICTION
-Percussion                     0.523
-Drum kit                       0.437
-Vibraphone                     0.420
-Drum                           0.316
-Music                          0.303
-Snare drum                     0.277
-Glockenspiel                   0.225
-Marimba, xylophone             0.223
-Cymbal                         0.213
-Bass drum                      0.207
-Hi-hat                         0.196
-Mallet percussion              0.170
-**************************************************
-```
+| 数据集 | 类别数 | fold | 默认 target_length |
+|---|---:|---|---:|
+| EMO-DB | 7 | 1–10 | 512 |
+| IEMOCAP-5531 | 4 | 1–5 | 1024 |
+| RAVDESS-Speech | 8 | 0–4 | 512 |
+| RAVDESS-Song | 6 | 0–4 | 640 |
 
-To evaluate on the full AudioSet evaluation set, use:
+环境变量、manifest 生成、单 fold 和批量命令见 [SER_FINETUNE_GUIDE.md](./SER_FINETUNE_GUIDE.md)。最常用的入口：
 
 ```bash
-bash EAT/scripts/eval.sh 
+# 生成/审计 manifests（首次）
+$PYTHON_BIN tools/prepare_ser_manifests.py \
+  --datasets-root "$SER_DATA_ROOT" \
+  --manifest-root "$SER_DATA_ROOT" \
+  --output "$SER_DATA_ROOT/manifests"
+
+# 单 fold：nested / fixed
+bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 1 --protocol nested
+bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 1 --protocol fixed
+
+# 全部数据集 × 5 seeds，并自动汇总
+bash scripts/run_all_SER.sh --protocol nested
+bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 ```
 
-This will report the evaluation value of mAP on the test set. Per-class AP scores are saved to `./EAT/ap_log.txt`. You could also refer to our results of finetuned EAT models on evaluation set of Audioset in `./EAT/results`.
+服务器上先按 [GPU-RUNBOOK.md](./GPU-RUNBOOK.md) §4.1 导出环境变量；不要用系统默认 `python`。
 
+## Upstream EAT
 
-<!-- omit in toc -->
-## Performance
-Pre-training on AS-2M, EAT gains state-of-the-art (SOTA) performance on several audio and speech classification datasets including AS-20K, AS-2M, ESC-50 and SPC-2.    
-![Alt text](./src/EAT_performance.png)
+- 论文：[EAT: Self-Supervised Pre-Training with Efficient Audio Transformer](https://arxiv.org/abs/2401.03497)
+- 上游代码：[cwx-worst-one/EAT](https://github.com/cwx-worst-one/EAT)
+- Hugging Face：[EAT collection](https://huggingface.co/collections/worstchan/eat-6815b4f1034f5214f9063948)
+- 上游预训练/微调、AudioSet 数据准备、AudioSet 推理与 mAP 评测，请直接使用上游仓库；本仓库聚焦 SER。
 
+常用 checkpoint：
 
-<!-- omit in toc -->
-## Efficiency
-EAT achieves a total pre-training time reduction of ~15x compared to BEATs and ~10x relative to Audio-MAE. The full pre-training on AS-2M requires only 10 epochs.    
-![Alt text](./src/EAT_efficiency.png)
+| Version | Google Drive | Hugging Face |
+|---|---|---|
+| EAT-base epoch30 pretrained | [Link](https://drive.google.com/file/d/19hfzLgHCkyqTOYmHt8dqVa9nm-weBq4f/view?usp=sharing) | [Link](https://huggingface.co/worstchan/EAT-base_epoch30_pretrain) |
+| EAT-base epoch30 AS-2M | [Link](https://drive.google.com/file/d/1aCYiQmoZv_Gh1FxnR-CCWpNAp6DIJzn6/view?usp=sharing) | [Link](https://huggingface.co/worstchan/EAT-base_epoch30_finetune_AS2M) |
+| EAT-large epoch20 pretrained | [Link](https://drive.google.com/file/d/1PEgriRvHsqrtLzlA478VemX7Q0ZGl889/view?usp=sharing) | [Link](https://huggingface.co/worstchan/EAT-large_epoch20_pretrain) |
+| EAT-large epoch20 AS-2M | [Link](https://drive.google.com/file/d/1b_f_nQAdjM1B6u72OFUtFiUu-4yM2shd/view?usp=sharing) | [Link](https://huggingface.co/worstchan/EAT-large_epoch20_finetune_AS2M) |
 
+上游 AudioSet 性能（mAP %）：
 
-<!-- omit in toc -->
-## Experiment Logs
-We report the experiment logs using [wandb](https://wandb.ai). We have published a  short WandB report detailing the training process and performance metrics of the EAT model. You could visit it [here](https://api.wandb.ai/links/wxc12/obqrpq36).
+| Model | Backbone | Params | AS-20K | AS-2M |
+|:-:|:-:|:-:|:-:|:-:|
+| EAT-base (10 epochs) | ViT-B | 88M | 40.3 | 48.6 |
+| EAT-base (30 epochs) | ViT-B | 88M | 41.3 | 48.9 |
+| EAT-large (20 epochs) | ViT-L | 309M | 42.0 | 49.5 |
 
+上游实现基于 [Audio-MAE](https://github.com/facebookresearch/AudioMAE) 和 [data2vec](https://github.com/facebookresearch/fairseq/tree/main/examples/data2vec)。
 
-<!-- omit in toc -->
-## TODO 
-- [x] Release the final EAT large
-- [x] Update codes and checkpoints for friendly usage
-- [x] Provide model support on Hugging Face
-- [ ] Release the Docker image
-
-
-## Acknowledgement
-Our codebase is based on the awesome [Audio-MAE](https://github.com/facebookresearch/AudioMAE) and [data2vec](https://github.com/facebookresearch/fairseq/tree/main/examples/data2vec) repo. 
-
-
-## Institutional Contributors
-|  Institution | Contribution |
-|:------|:-----|
-| [Shanghai Jiao Tong University](https://www.seiee.sjtu.edu.cn/) | Researchers; Computing power |
-| [Peng Cheng Laboratory](https://data-starcloud.pcl.ac.cn/) | Researchers; Computing power |
-
-
-<!-- omit in toc -->
 ## Citation
-If you find our EAT codes and models useful, please cite the following paper:
+
 ```bibtex
 @inproceedings{chen2024eat,
   title={{EAT}: Self-Supervised Pre-Training with Efficient Audio Transformer},
@@ -251,5 +119,11 @@ If you find our EAT codes and models useful, please cite the following paper:
 }
 ```
 
+## Acknowledgement
 
-<!-- omit in toc -->
+- EAT: Shanghai Jiao Tong University / Peng Cheng Laboratory.
+- 上游代码基于 [Audio-MAE](https://github.com/facebookresearch/AudioMAE) 和 [data2vec](https://github.com/facebookresearch/fairseq/tree/main/examples/data2vec)。
+
+## License
+
+MIT License，见 [LICENSE](./LICENSE)。

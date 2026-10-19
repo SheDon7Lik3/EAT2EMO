@@ -12,14 +12,14 @@ checkpoint:
   save_interval: 1
   save_interval_updates: 0
   keep_last_epochs: 1
-  no_epoch_checkpoints: false
+  no_epoch_checkpoints: true
   best_checkpoint_metric: uar
   maximize_best_checkpoint_metric: true
-  patience: 8
+  patience: -1
 
 task:
   _name: mae_image_classification
-  data: /root/songhao/datasets/ser_datasets/manifests/ravdess/fold_01
+  data: /root/songhao/datasets/SER_DATASET/manifests/ravdess-speech/fold_00
   downsr_16hz: true
   audio_mae: true
   single_label: true
@@ -38,7 +38,8 @@ dataset:
   skip_invalid_size_inputs_valid_test: true
   required_batch_size_multiple: 1
   train_subset: train
-  valid_subset: eval
+  valid_subset: valid
+  disable_validation: false
   validate_interval: 1
 
 distributed_training:
@@ -53,7 +54,9 @@ criterion:
     - _targets
 
 optimization:
-  max_update: 1500
+  # The launcher overrides both fields from manifest samples and requested epochs.
+  max_epoch: 80
+  max_update: 0
   lr: [0.00005]
 
 optimizer:
@@ -68,7 +71,8 @@ optimizer:
         weight_decay: 0.05
       lr_scheduler:
         _name: cosine
-        warmup_updates: 150
+        # The launcher overrides this with 10% of the per-stage max updates.
+        warmup_updates: 0
         min_lr: 1e-6
 
 lr_scheduler: pass_through

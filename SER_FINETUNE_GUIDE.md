@@ -1,300 +1,147 @@
 # SER 微调指南
 
-本文档说明如何在本项目中进行 Speech Emotion Recognition, SER 微调。当前默认使用服务器上的数据路径与 checkpoint 路径，适合在本地开发后同步到服务器执行。
+本文只负责 **SER 协议、命令语义和指标口径**。环境安装与版本见 [ENVIRONMENT.md](./ENVIRONMENT.md)；服务器连接、代码同步、smoke 和排障见 [GPU-RUNBOOK.md](./GPU-RUNBOOK.md)。
 
-## 1. 目录约定
+## 1. 协议约定
 
-默认约定如下：
+| 数据集 | 类别数 | fold | 默认长度 | nested 选择上限 |
+|---|---:|---|---:|---:|
+| EMO-DB | 7 | 1–10 | 512 | 80 epochs |
+| IEMOCAP-5531 | 4 | 1–5 | 1024 | 20 epochs |
+| RAVDESS-Speech | 8 | 0–4 | 512 | 80 epochs |
+| RAVDESS-Song | 6 | 0–4 | 640 | 80 epochs |
 
-- 代码仓库：`/root/songhao/ProJ/EAT2EMO`
-- SER 数据集根目录：`/root/songhao/datasets/ser_datasets`
-- checkpoint 根目录：`/root/songhao/datasets/checkpoints`
-- Fairseq 源码：`/root/songhao/ProJ/fairseq`
+- `nested`：用 `inner_train/inner_valid` 选 epoch，再从 EAT 预训练权重重新初始化，在完整 `train` 上训练所选 epoch，最后只评估一次 `valid`。
+- `fixed`：只读取 `train/valid`，默认完整训练 60 epochs，不用 `valid` 选 checkpoint，最后只评估一次。
+- 两种协议均保留 EAT AudioSet 归一化：`mean=-4.268`、`std=4.569`。
 
-SER 原始数据放在：
-
-- `/root/songhao/datasets/ser_datasets/ravdess-speech`
-- `/root/songhao/datasets/ser_datasets/emodb`
-- `/root/songhao/datasets/ser_datasets/iemocap`
-
-SER 划分后的 manifests 会生成到：
-
-- `/root/songhao/datasets/ser_datasets/manifests/ravdess`
-- `/root/songhao/datasets/ser_datasets/manifests/emodb`
-- `/root/songhao/datasets/ser_datasets/manifests/iemocap`
-
-每个数据集目录下面会有多个 fold，例如：
-
-- `/root/songhao/datasets/ser_datasets/manifests/ravdess/fold_01`
-- `/root/songhao/datasets/ser_datasets/manifests/ravdess/fold_02`
-
-每个 fold 下会包含：
-
-- `train.tsv`
-- `eval.tsv`
-- `test.tsv`
-- `train.lbl`
-- `eval.lbl`
-- `test.lbl`
-- `label_descriptors.csv`
-- `summary.json`
-
-## 2. 环境准备
-
-先确认相关环境变量：
+## 2. 路径与环境
 
 ```bash
 export FAIRSEQ_ROOT=/root/songhao/ProJ/fairseq
-export SER_DATA_ROOT=/root/songhao/datasets/ser_datasets
-export CHECKPOINT_ROOT=/root/songhao/datasets/checkpoints
+export SER_DATA_ROOT=/root/songhao/datasets/SER_DATASET
+export SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO
+export SER_PRETRAINED=/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_pt.pt
+export PYTHON_BIN=/root/miniconda3/envs/eat2emo/bin/python
+export PYTHONDONTWRITEBYTECODE=1
 ```
 
-如果第一次使用，请先确认以下文件存在：
+当前服务器环境为 `eat2emo`（见 [ENVIRONMENT.md](./ENVIRONMENT.md)）。SER 流程不使用 `CHECKPOINT_ROOT`；该变量只被旧的非 SER 脚本使用。
 
-```bash
-test -f /root/songhao/ProJ/fairseq/fairseq_cli/hydra_train.py
-test -d /root/songhao/datasets/ser_datasets/ravdess-speech
-test -d /root/songhao/datasets/ser_datasets/emodb
-test -d /root/songhao/datasets/ser_datasets/iemocap
-test -f /root/songhao/datasets/checkpoints/EAT-base_epoch30_pt.pt
-```
+默认预训练权重为 `/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_pt.pt`，可用 `SER_PRETRAINED` 覆盖。
 
-## 3. 生成 SER manifests
-
-当原始数据放好后，先生成 speaker-independent manifests：
+## 3. 生成并审计 manifests
 
 ```bash
 cd /root/songhao/ProJ/EAT2EMO
-python tools/prepare_ser_manifests.py \
-  --datasets-root /root/songhao/datasets/ser_datasets \
-  --output /root/songhao/datasets/ser_datasets/manifests
+$PYTHON_BIN tools/prepare_ser_manifests.py \
+  --datasets-root /root/songhao/datasets/SER_DATASET \
+  --manifest-root /root/songhao/datasets/SER_DATASET \
+  --output /root/songhao/datasets/SER_DATASET/manifests
 ```
 
-生成完成后，可以检查任意一个 fold：
+每个 `fold_XX` 包含：
+
+- `train/valid/inner_train/inner_valid.tsv`
+- 对应的 `.lbl`
+- `label_descriptors.csv`
+- 带样本数、分组、音频格式和文件哈希审计的 `split.json`
+
+生成器会强制检查总数 `535/5531/1440/1012`、说话人零交叉、outer-valid 唯一覆盖，以及所有 WAV 为单声道 16 kHz。任一检查失败都会终止。
+
+IEMOCAP 如果要从 parquet 重建，先用下面的工具生成 `metadata.csv` 和 `SessionN/` 布局（默认要求 5531 条 4 类样本；非协议类别会被跳过）：
 
 ```bash
-ls /root/songhao/datasets/ser_datasets/manifests/ravdess/fold_01
-head -n 3 /root/songhao/datasets/ser_datasets/manifests/ravdess/fold_01/eval.tsv
+$PYTHON_BIN tools/extract_iemocap_parquet.py /path/to/parquet \
+  --output /root/songhao/datasets/SER_DATASET/IEMOCAP-5531
 ```
 
-## 4. 训练
+输出可直接被 `prepare_ser_manifests.py` 读取；如果输入不是 5531 条子集，工具会在写文件前报错，避免生成半成品。
 
-SER 微调脚本为：
+## 4. 单 fold 训练
+
+Nested 完整流程：
 
 ```bash
-bash scripts/finetuning_SER.sh ravdess fold_01
+bash scripts/finetuning_SER.sh \
+  --dataset emodb --fold 1 --seed 1 --protocol nested
 ```
 
-默认会使用：
-
-- 数据集：`ravdess`
-- fold：`fold_01`
-- 预训练模型：`/root/songhao/datasets/checkpoints/EAT-base_epoch30_pt.pt`
-- 输出目录：`/root/songhao/datasets/checkpoints/ser/ravdess/fold_01`
-
-如果你想指定其他预训练 checkpoint，可以作为第三个参数传入：
+也可分阶段执行：
 
 ```bash
-bash scripts/finetuning_SER.sh ravdess fold_01 /path/to/your_checkpoint.pt
+bash scripts/finetuning_SER.sh \
+  --dataset emodb --fold 1 --seed 1 --protocol nested --stage select
+bash scripts/finetuning_SER.sh \
+  --dataset emodb --fold 1 --seed 1 --protocol nested --stage final
 ```
 
-如果你想指定输出目录，可以作为第四个参数传入：
+Fixed：
 
 ```bash
-bash scripts/finetuning_SER.sh ravdess fold_01 /path/to/your_checkpoint.pt /path/to/output_dir
+bash scripts/finetuning_SER.sh \
+  --dataset emodb --fold 1 --seed 1 --protocol fixed --fixed-epochs 60
 ```
 
-### 支持的数据集
-
-目前脚本支持：
-
-- `ravdess`
-- `emodb`
-- `iemocap`
-
-## 5. 评估
-
-训练结束后，单独跑测试集评估：
-
-```bash
-bash scripts/eval_SER.sh ravdess fold_01
-```
-
-默认会读取：
-
-- checkpoint：`/root/songhao/datasets/checkpoints/ser/ravdess/fold_01/checkpoint_best.pt`
-- 输出目录：`/root/songhao/datasets/checkpoints/ser/ravdess/fold_01/test`
-
-如果想手动指定 checkpoint，可以作为第三个参数传入：
-
-```bash
-bash scripts/eval_SER.sh ravdess fold_01 /path/to/checkpoint_best.pt
-```
-
-如果想指定测试输出目录，可以作为第四个参数传入：
-
-```bash
-bash scripts/eval_SER.sh ravdess fold_01 /path/to/checkpoint_best.pt /path/to/test_output
-```
-
-测试结果会写入：
-
-- `metrics.json`
-- `confusion_matrix.csv`
-
-## 6. 汇总交叉验证结果
-
-当一个数据集的所有 fold 都跑完后，可以汇总结果：
-
-```bash
-python evaluation/summarize_ser.py /root/songhao/datasets/checkpoints/ser/ravdess
-```
-
-汇总脚本会读取所有：
-
-- `fold_*/test/metrics.json`
-
-并输出各指标的 mean/std。
-
-## 7. 常见问题
-
-### 7.1 manifest root 找不到
-
-如果训练时报错类似：
+输出按以下目录隔离，已存在时默认拒绝覆盖：
 
 ```text
-Could not resolve manifest root ...
+${SER_OUTPUT_ROOT}/{dataset}/{protocol}/{config}/seed_N/fold_XX/{selection|final|fixed}
 ```
 
-通常说明 `train.tsv` / `eval.tsv` 第一行写的 root 不对。  
-解决方式是重新生成 manifests：
+## 5. 服务器 smoke test
+
+先使用独立输出目录，对每种协议实际跑 1 epoch：
 
 ```bash
-python tools/prepare_ser_manifests.py \
-  --datasets-root /root/songhao/datasets/ser_datasets \
-  --output /root/songhao/datasets/ser_datasets/manifests
+export SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO_smoke
+
+bash scripts/finetuning_SER.sh \
+  --dataset emodb --fold 1 --seed 1 --protocol nested \
+  --selection-max-epochs 1
+
+bash scripts/finetuning_SER.sh \
+  --dataset emodb --fold 1 --seed 1 --protocol fixed \
+  --fixed-epochs 1
 ```
 
-### 7.2 找不到 Fairseq
+`--dry-run` 只校验输入并打印 Fairseq 命令，不会训练或写入实验目录。
 
-如果报错找不到 `fairseq_cli/hydra_train.py`，说明 `FAIRSEQ_ROOT` 没有指对。  
-请确认：
+## 6. 批量实验与汇总
+
+默认运行四个数据集、seeds `1,2,3,4,5`：
 
 ```bash
-ls /root/songhao/ProJ/fairseq/fairseq_cli/hydra_train.py
+export SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO
+bash scripts/run_all_SER.sh --protocol nested
+bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 ```
 
-### 7.3 checkpoint 不存在
-
-默认微调脚本会读取：
+仅运行指定数据集或 seeds：
 
 ```bash
-/root/songhao/datasets/checkpoints/EAT-base_epoch30_pt.pt
+bash scripts/run_all_SER.sh \
+  --datasets emodb,ravdess-song --seeds 1,2,3,4,5 --protocol nested
 ```
 
-如果没有这个文件，请换成你自己的预训练 checkpoint。
-
-## 8. 推荐的运行顺序
-
-建议按下面顺序执行：
-
-1. 配置环境变量
-2. 生成 SER manifests
-3. 训练一个 fold
-4. 跑该 fold 的测试集
-5. 汇总所有 fold
-
-例如：
+批量流程完成一个数据集的全部 fold/seed 后会自动严格汇总。也可手动执行：
 
 ```bash
-export FAIRSEQ_ROOT=/root/songhao/ProJ/fairseq
-export SER_DATA_ROOT=/root/songhao/datasets/ser_datasets
-export CHECKPOINT_ROOT=/root/songhao/datasets/checkpoints
-
-cd /root/songhao/ProJ/EAT2EMO
-python tools/prepare_ser_manifests.py \
-  --datasets-root /root/songhao/datasets/ser_datasets \
-  --output /root/songhao/datasets/ser_datasets/manifests
-
-bash scripts/finetuning_SER.sh ravdess fold_01
-bash scripts/eval_SER.sh ravdess fold_01
-python evaluation/summarize_ser.py /root/songhao/datasets/checkpoints/ser/ravdess
+$PYTHON_BIN evaluation/summarize_ser.py \
+  /root/songhao/experiments/EAT2EMO/emodb/nested/eat_base_sr16k_audiosetnorm_bs32 \
+  --dataset emodb --protocol nested \
+  --config eat_base_sr16k_audiosetnorm_bs32
 ```
 
-## 9. 部署与同步
+每个 fold 保存 `metrics.json`、`predictions.npz`、`paths.txt`、`confusion_matrix.csv`和 `eval.log`。汇总产生 JSON 主结果与 fold CSV：
 
-如果你已经把代码推到 GitHub，推荐把 GitHub 作为唯一的代码同步源。本地负责开发，服务器负责拉取并运行。
+- EMO-DB 主结果：每个 seed 池化 10 折、535 条 OOF 预测，再对 5 seeds 计算均值±标准差。
+- 其他数据集：先在每个 seed 内汇总 folds，再计算 5 seeds 的均值±标准差。
+- 逐 fold 的 Accuracy/WA、UAR、Macro-F1、loss 及 fold mean±std 始终保留为补充。
 
-### 9.1 本地更新到 GitHub
+## 7. 运行原则
 
-本地修改完成后：
-
-```bash
-git add .
-git commit -m "your message"
-git push
-```
-
-### 9.2 服务器首次部署
-
-服务器上先准备一个固定目录，例如：
-
-```bash
-cd /root/songhao/ProJ
-git clone git@github.com:SheDon7Lik3/EAT2EMO.git
-```
-
-如果你已经在服务器上有这个目录，并且它已经是一个 git 仓库，可以直接进入目录：
-
-```bash
-cd /root/songhao/ProJ/EAT2EMO
-```
-
-### 9.3 服务器日常同步
-
-服务器上拉取最新代码：
-
-```bash
-cd /root/songhao/ProJ/EAT2EMO
-git pull
-```
-
-如果你担心服务器上有本地改动，建议使用仓库里的备份拉取脚本：
-
-```bash
-cd /root/songhao/ProJ/EAT2EMO
-./scripts/backup_and_pull.sh
-```
-
-这个脚本会先把当前目录备份到 `_backups/`，再执行 `git pull --ff-only`，适合在服务器上做安全更新。
-脚本当前实现不依赖 `rsync`，在精简服务器环境里也更容易直接运行。
-
-### 9.4 SSH 访问说明
-
-如果仓库是私有的，服务器需要单独配置 SSH key 才能访问 GitHub。  
-如果你在服务器上已经执行过：
-
-```bash
-ssh -T git@github.com
-```
-
-并且看到了成功认证信息，就可以直接使用 SSH clone/pull。
-
-### 9.5 数据与代码分离
-
-请保持以下内容不进 Git：
-
-- 数据集原始文件
-- manifests
-- checkpoints
-- 训练日志
-- wandb / tensorboard 输出
-- 服务器备份目录 `_backups/`
-- Hydra 多次实验输出 `multirun/`
-
-推荐做法是：
-
-- 代码放 GitHub
-- 数据放 `/root/songhao/datasets/ser_datasets`
-- checkpoint 放 `/root/songhao/datasets/checkpoints`
-- 服务器只负责 `git pull` 同步代码，不负责同步大文件
+- 调度器按训练样本数计算 `ceil(samples/32) × epochs` 个 updates，warm-up 为总 updates 的 10%，保留 cosine 与 `min_lr=1e-6`。
+- 音频解码失败、空音频或无效样本立即终止，不跳过、不用其他样本补位。
+- `fixed` 与 nested `final` 训练期间禁用验证，只在结束后评估 outer-valid 一次。
+- 单 fold 缺类时，UAR/Macro-F1 只对该 fold 实际出现的类计算；EMO-DB OOF 主指标使用完整 7 类。

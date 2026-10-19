@@ -111,7 +111,7 @@ class MaeImagePretrainingTask(FairseqTask):
             h5_format=cfg.h5_format,
             esc50_eval=cfg.esc50_eval, 
             spcv2_eval=cfg.spcv2_eval,
-            roll_aug=cfg.roll_aug and split == 'train',
+            roll_aug=cfg.roll_aug and split in {'train', 'inner_train'},
             target_length=cfg.target_length,
             noise=cfg.noise,
             AS2M_finetune=cfg.AS2M_finetune,
