@@ -16,13 +16,14 @@ DEFAULT_SEEDS="3949,42,2026,1024,666"
 SEEDS="all"
 FOLDS="all"
 PROTOCOL="nested"
+NORM_MODE="audioset"
 STAGE="all"
 FIXED_EPOCHS="60"
 SELECTION_MAX_EPOCHS=""
 DRY_RUN=false
 
 usage() {
-  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol nested|fixed] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
+  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol nested|fixed] [--norm-mode audioset|fold] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
   echo "Defaults: all four datasets; seeds ${DEFAULT_SEEDS}; folds all."
   echo "Completed formal runs are strictly summarized per dataset/protocol/config; partial folds skip the automatic summary."
 }
@@ -33,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --seeds) SEEDS="${2:-}"; shift 2 ;;
     --folds) FOLDS="${2:-}"; shift 2 ;;
     --protocol) PROTOCOL="${2:-}"; shift 2 ;;
+    --norm-mode) NORM_MODE="${2:-}"; shift 2 ;;
     --stage) STAGE="${2:-}"; shift 2 ;;
     --fixed-epochs) FIXED_EPOCHS="${2:-}"; shift 2 ;;
     --selection-max-epochs) SELECTION_MAX_EPOCHS="${2:-}"; shift 2 ;;
@@ -46,6 +48,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$PROTOCOL" == nested || "$PROTOCOL" == fixed ]] || { echo "Invalid protocol: $PROTOCOL" >&2; exit 2; }
+[[ "$NORM_MODE" == audioset || "$NORM_MODE" == fold ]] || { echo "Invalid norm mode: $NORM_MODE" >&2; exit 2; }
 [[ "$STAGE" == all || "$STAGE" == select || "$STAGE" == final ]] || { echo "Invalid stage: $STAGE" >&2; exit 2; }
 [[ "$FIXED_EPOCHS" =~ ^[1-9][0-9]*$ ]] || { echo "--fixed-epochs must be positive" >&2; exit 2; }
 if [[ -n "$SELECTION_MAX_EPOCHS" && ! "$SELECTION_MAX_EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
@@ -147,6 +150,9 @@ for dataset in "${dataset_list[@]}"; do
 
   effective_config="$SER_CONFIG_NAME"
   if ! $CONFIG_NAME_EXPLICIT; then
+    if [[ "$NORM_MODE" == fold ]]; then
+      effective_config="${effective_config}_foldnorm"
+    fi
     if [[ "$PROTOCOL" == fixed && "$FIXED_EPOCHS" != 60 ]]; then
       effective_config="${effective_config}_fixedep${FIXED_EPOCHS}"
     elif [[
@@ -166,6 +172,7 @@ for dataset in "${dataset_list[@]}"; do
         --fold "$fold"
         --seed "$seed"
         --protocol "$PROTOCOL"
+        --norm-mode "$NORM_MODE"
         --fixed-epochs "$FIXED_EPOCHS"
         --data-root "$SER_DATA_ROOT"
         --output-root "$SER_OUTPUT_ROOT"

@@ -28,6 +28,9 @@ task:
   target_length: ???
   # Required: tools/ser_protocol.py sets the feature cache root.
   feature_cache_root: ???
+  # audioset (EAT default) or fold (per-fold train statistics).
+  norm_mode: audioset
+  norm_stats_path: ""
   roll_aug: false
   noise: false
   h5_format: false

@@ -62,6 +62,8 @@ class StagePlan:
     num_classes: int
     data_dir: Path
     feature_cache_dir: Path
+    norm_mode: str
+    norm_stats_path: Path | None
     output_dir: Path
     pretrained: Path
     fairseq_root: Path
@@ -120,6 +122,8 @@ def resolve_config_name(args: argparse.Namespace) -> str:
     name = args.config_name
     if not args.auto_config_name:
         return name
+    if args.norm_mode == "fold":
+        name = f"{name}_foldnorm"
     if args.protocol == "fixed" and args.fixed_epochs != DEFAULT_FIXED_EPOCHS:
         return f"{name}_fixedep{args.fixed_epochs}"
     default_selection_epochs = DATASETS[args.dataset].selection_epochs
@@ -148,6 +152,33 @@ def require_split(data_dir: Path, split: str) -> None:
             raise FileNotFoundError(f"Missing {split} file: {path}")
 
 
+def norm_stats_path_for(args: argparse.Namespace, stage: str) -> Path:
+    return (
+        args.data_root
+        / "norm_stats"
+        / args.dataset
+        / stage
+        / f"{fold_dir_name(args.fold)}.json"
+    )
+
+
+def validate_norm_stats_available(args: argparse.Namespace) -> None:
+    if args.norm_mode != "fold":
+        return
+    if args.protocol == "fixed":
+        stages = ("fixed",)
+    else:
+        stages = []
+        if args.stage in ("all", "select"):
+            stages.append("selection")
+        if args.stage in ("all", "final"):
+            stages.append("final")
+    for stage in stages:
+        path = norm_stats_path_for(args, stage)
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing norm stats: {path}")
+
+
 def build_stage_plan(
     args: argparse.Namespace,
     stage: str,
@@ -162,6 +193,11 @@ def build_stage_plan(
     require_split(data_dir, valid_subset)
     train_samples = count_manifest_samples(data_dir / f"{train_subset}.tsv")
     updates_per_epoch, max_updates, warmup_updates = compute_schedule(train_samples, epochs)
+    norm_stats_path = None
+    if args.norm_mode == "fold":
+        norm_stats_path = norm_stats_path_for(args, stage)
+        if not norm_stats_path.is_file():
+            raise FileNotFoundError(f"Missing norm stats: {norm_stats_path}")
     return StagePlan(
         dataset=args.dataset,
         protocol=args.protocol,
@@ -180,6 +216,8 @@ def build_stage_plan(
         num_classes=spec.num_classes,
         data_dir=data_dir,
         feature_cache_dir=args.data_root / "feature_cache" / args.dataset,
+        norm_mode=args.norm_mode,
+        norm_stats_path=norm_stats_path,
         output_dir=stage_output_dir(args, stage),
         pretrained=args.pretrained,
         fairseq_root=args.fairseq_root,
@@ -193,7 +231,7 @@ def hydra_train_command(plan: StagePlan) -> list[str]:
     # Point it at train in formal stages so sealed outer-valid is not touched.
     fairseq_valid_subset = plan.valid_subset if validation_enabled else plan.train_subset
     output = plan.output_dir
-    return [
+    command = [
         plan.python,
         str(plan.fairseq_root / "fairseq_cli" / "hydra_train.py"),
         "--config-dir",
@@ -207,6 +245,7 @@ def hydra_train_command(plan: StagePlan) -> list[str]:
         f"task.data={plan.data_dir}",
         f"task.target_length={plan.target_length}",
         f"task.feature_cache_root={plan.feature_cache_dir}",
+        f"task.norm_mode={plan.norm_mode}",
         f"model.model_path={plan.pretrained}",
         f"model.num_classes={plan.num_classes}",
         f"model.target_length={plan.target_length}",
@@ -226,6 +265,9 @@ def hydra_train_command(plan: StagePlan) -> list[str]:
         "checkpoint.best_checkpoint_metric=uar",
         "checkpoint.maximize_best_checkpoint_metric=true",
     ]
+    if plan.norm_stats_path is not None:
+        command.append(f"task.norm_stats_path={plan.norm_stats_path}")
+    return command
 
 
 def eval_command(plan: StagePlan, checkpoint: Path, selected_epoch: int | None) -> list[str]:
@@ -256,11 +298,13 @@ def eval_command(plan: StagePlan, checkpoint: Path, selected_epoch: int | None) 
         "valid",
         "--target-length",
         str(plan.target_length),
-        "--norm-mean",
-        "-4.268",
-        "--norm-std",
-        "4.569",
+        "--norm-mode",
+        plan.norm_mode,
     ]
+    if plan.norm_mode == "fold":
+        command.extend(["--norm-stats-path", str(plan.norm_stats_path)])
+    else:
+        command.extend(["--norm-mean", "-4.268", "--norm-std", "4.569"])
     if plan.protocol == "fixed":
         command.extend(["--fixed-epochs", str(plan.epochs)])
     else:
@@ -496,6 +540,12 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=3949)
     parser.add_argument("--protocol", choices=("nested", "fixed"), default="nested")
     parser.add_argument("--stage", choices=("all", "select", "final"), default="all")
+    parser.add_argument(
+        "--norm-mode",
+        choices=("audioset", "fold"),
+        default="audioset",
+        help="audioset uses EAT fixed stats; fold uses per-fold train stats",
+    )
     parser.add_argument("--fixed-epochs", type=positive_int, default=DEFAULT_FIXED_EPOCHS)
     parser.add_argument(
         "--selection-max-epochs",
@@ -545,6 +595,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.fairseq_root = args.fairseq_root.expanduser().resolve()
     try:
         validate_runtime(args)
+        validate_norm_stats_available(args)
         if args.protocol == "fixed":
             plan = build_stage_plan(args, "fixed", args.fixed_epochs)
             ensure_fresh_output([plan.output_dir])

@@ -13,7 +13,40 @@
 
 - `nested`：用 `inner_train/inner_valid` 选 epoch，再从 EAT 预训练权重重新初始化，在完整 `train` 上训练所选 epoch，最后只评估一次 `valid`。
 - `fixed`：只读取 `train/valid`，默认完整训练 60 epochs，不用 `valid` 选 checkpoint，最后只评估一次。
-- 两种协议均保留 EAT AudioSet 归一化：`mean=-4.268`、`std=4.569`。
+- 默认 `--norm-mode audioset`：使用 EAT/AudioSet 固定 `mean=-4.268`、`std=4.569`，保持旧路径兼容。
+- `--norm-mode fold`：每个 fold/stage 使用本折训练集的有效帧统计量，只归一化有效帧，padding 保持精确 0。
+
+### 1.1 归一化统计量
+
+`fold` 模式的统计量只从对应训练 split 计算，不包含 padding，也不使用任何增强：
+
+```bash
+# 单个 fold：fixed/final 用 train；selection 用 inner_train
+$PYTHON_BIN tools/compute_ser_norm_stats.py --dataset emodb --fold 1 --stage fixed
+
+# 全数据集、全 fold（fixed/selection/final 各一套）
+for ds in emodb iemocap ravdess-speech ravdess-song; do
+  for stage in fixed selection final; do
+    $PYTHON_BIN tools/compute_ser_norm_stats.py \
+      --dataset "$ds" --all-folds --stage "$stage" --overwrite
+  done
+done
+```
+
+输出在：
+
+```text
+$SER_DATA_ROOT/norm_stats/<dataset>/<stage>/fold_XX.json
+```
+
+正式使用 `fold` 模式：
+
+```bash
+bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 \
+  --protocol fixed --norm-mode fold
+```
+
+`audioset` 和 `fold` 会自动使用不同 config 名/缓存目录，不能混表汇总。
 
 ## 2. 路径与环境
 
@@ -128,7 +161,8 @@ bash scripts/run_all_SER.sh \
   --datasets emodb,ravdess-song \
   --seeds 3949,42 \
   --folds 1,2 \
-  --protocol nested
+  --protocol nested \
+  --norm-mode fold
 ```
 
 - `--seeds all`：全部 5 个参考 seed（默认）；`--seeds 3949`：只跑一个。

@@ -86,6 +86,8 @@ class MaeImageDataset(FairseqDataset):
         downsr_16hz:bool = False,
         target_length:int = 1024,
         feature_cache_root: str = "",
+        norm_mode: str = "audioset",
+        norm_stats_path: str = "",
         esc50_eval:bool = False,
         spcv2_eval:bool = False,
         roll_aug: bool = False,
@@ -108,6 +110,8 @@ class MaeImageDataset(FairseqDataset):
             self.downsr_16hz = downsr_16hz
             self.target_length = target_length
             self.feature_cache_root = feature_cache_root
+            self.norm_mode = norm_mode
+            self.norm_stats_path = norm_stats_path
             self.esc50_eval = esc50_eval
             self.spcv2_eval = spcv2_eval
             self.noise = noise
@@ -148,6 +152,8 @@ class MaeImageDataset(FairseqDataset):
                     wav2fbank=True,
                     target_length=self.target_length,
                     feature_cache_root=self.feature_cache_root,
+                    norm_mode=self.norm_mode,
+                    norm_stats_path=self.norm_stats_path,
                     esc50_eval=self.esc50_eval,
                     spcv2_eval=self.spcv2_eval,
                     roll_mag_aug=self.roll_aug,

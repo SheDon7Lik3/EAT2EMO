@@ -445,6 +445,21 @@ bash scripts/finetuning_SER.sh \
 
 smoke 会自动使用 `_selectmaxep1` / `_fixedep1` config 后缀，和正式结果隔离。检查 smoke 产出的 `metrics.json`、`predictions.npz`、`paths.txt`、`confusion_matrix.csv`、`eval.log` 都存在且可读。
 
+### 7.1.1 生成 fold 归一化统计量（使用 `--norm-mode fold` 前）
+
+```bash
+cd "$REPO"
+for ds in emodb iemocap ravdess-speech ravdess-song; do
+  for stage in fixed selection final; do
+    $PYTHON_BIN tools/compute_ser_norm_stats.py \
+      --dataset "$ds" --all-folds --stage "$stage" --overwrite
+  done
+done
+```
+
+统计量只累计对应训练 split 的有效帧，输出到
+`$SER_DATA_ROOT/norm_stats/<dataset>/<stage>/fold_XX.json`。
+
 ### 7.2 正式批量
 
 长跑先开 `screen`（服务器没有 `tmux`）：
@@ -473,6 +488,9 @@ bash scripts/run_all_SER.sh --protocol nested
 
 # fixed：4 个数据集，seeds 3949,42,2026,1024,666，60 epoch
 bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
+
+# fixed + fold 归一化（需先生成 norm_stats）
+bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60 --norm-mode fold
 ```
 
 只跑部分数据集/seed/fold：
@@ -545,7 +563,8 @@ bash scripts/eval_SER.sh --dataset emodb --fold 1 --seed 3949 --protocol nested 
 注意：
 
 - 正式评测只接受 `stage=final`（nested）或 `stage=fixed`（fixed），`split=valid`；
-- AudioSet 归一化固定为 `mean=-4.268`、`std=4.569`，`eval_ser.py` 会拒绝其他值；
+- 默认 `--norm-mode audioset` 使用 `mean=-4.268`、`std=4.569`；
+- `--norm-mode fold` 使用 `$SER_DATA_ROOT/norm_stats/<dataset>/<stage>/fold_XX.json`，只归一化有效帧、padding 保持 0；
 - 默认拒绝覆盖已有 `results/` 产物；只有确认要替换时才加 `--overwrite`。
 
 ### 8.2 汇总
@@ -566,7 +585,7 @@ $PYTHON_BIN evaluation/summarize_ser.py \
 - fold/seed 网格完整、无重复；
 - 每个 seed 的 outer-valid 路径唯一且覆盖预期样本数（EMO-DB 535）；
 - `predictions.npz` 与 `metrics.json` 重算一致；
-- 标签顺序、类别数、target_length、AudioSet 归一化正确。
+- 标签顺序、类别数、target_length、norm mode/stats 正确。
 
 输出 `summary.json` 和 `summary_folds.csv`。完整的 OOF/均值±标准差、UAR/Macro-F1 口径见 [SER_FINETUNE_GUIDE.md](SER_FINETUNE_GUIDE.md) §6。
 

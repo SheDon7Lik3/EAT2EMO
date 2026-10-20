@@ -1,3 +1,4 @@
+import json
 import subprocess
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from evaluation.eval_ser import (
 )
 from evaluation.summarize_ser import (
     DEFAULT_SEEDS,
+    _load_fold_result,
     aggregate_results,
     discover_fold_results,
 )
@@ -48,6 +50,11 @@ def save_fold(
     probabilities=None,
     config="test_config",
     fixed_epochs=60,
+    norm_mode="audioset",
+    norm_mean=-4.268,
+    norm_std=4.569,
+    norm_stats_path=None,
+    norm_stats_sha256="",
 ):
     labels = LABELS[dataset]
     if probabilities is None:
@@ -66,8 +73,11 @@ def save_fold(
         "selected_epoch": 3 if protocol == "nested" else None,
         "trained_epochs": fixed_epochs if protocol == "fixed" else 3,
         "target_length": 640 if dataset == "emodb" else 1024,
-        "norm_mean": -4.268,
-        "norm_std": 4.569,
+        "norm_mode": norm_mode,
+        "norm_mean": norm_mean,
+        "norm_std": norm_std,
+        "norm_stats_path": norm_stats_path,
+        "norm_stats_sha256": norm_stats_sha256,
     }
     save_evaluation_artifacts(
         output,
@@ -183,6 +193,32 @@ class SerMetricTest(unittest.TestCase):
                     LABELS["iemocap"],
                     metadata,
                 )
+
+
+    def test_fold_norm_metrics_are_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            save_fold(
+                root,
+                dataset="emodb",
+                protocol="fixed",
+                fold=1,
+                seed=1,
+                targets=[0, 1],
+                paths=["a.wav", "b.wav"],
+                norm_mode="fold",
+                norm_mean=-5.0,
+                norm_std=4.0,
+                norm_stats_path="/tmp/norm_stats.json",
+                norm_stats_sha256="a" * 64,
+            )
+            metrics_path = (
+                root / "emodb" / "fixed" / "test_config" / "seed_1"
+                / "fold_01" / "fixed" / "results" / "metrics.json"
+            )
+            result = _load_fold_result(metrics_path)
+            self.assertEqual(result.payload["norm_mode"], "fold")
+            self.assertAlmostEqual(result.payload["norm_mean"], -5.0)
 
 
 class SerAggregationTest(unittest.TestCase):

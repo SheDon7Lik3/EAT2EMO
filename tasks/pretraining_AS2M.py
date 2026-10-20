@@ -59,6 +59,8 @@ class MaeImagePretrainingConfig(FairseqDataclass):
     downsr_16hz: bool = field(default=False,metadata={"help": "if set, wav file's sample rate will be reduced to 16kHz."})
     target_length: int = field(default=1024,metadata={"help": "This setting will pad the audio spectrogram with zeros."})
     feature_cache_root: str = field(default="", metadata={"help": "optional fbank feature cache root"})
+    norm_mode: str = field(default="audioset", metadata={"help": "audioset or fold normalization"})
+    norm_stats_path: str = field(default="", metadata={"help": "per-fold normalization statistics JSON"})
     flexible_mask: bool = field(default=False, metadata={"help": "if true, we will using flexible inverse block mask method."})
     
     esc50_eval: bool = field(default=False, metadata={"help": "if true, the task is to finetune model on esc50 dataset."})
@@ -115,6 +117,8 @@ class MaeImagePretrainingTask(FairseqTask):
             roll_aug=cfg.roll_aug and split in {'train', 'inner_train'},
             target_length=cfg.target_length,
             feature_cache_root=cfg.feature_cache_root,
+            norm_mode=cfg.norm_mode,
+            norm_stats_path=cfg.norm_stats_path,
             noise=cfg.noise,
             AS2M_finetune=cfg.AS2M_finetune,
             spcv1_finetune=cfg.spcv1_finetune,

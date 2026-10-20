@@ -8,6 +8,8 @@ import logging
 import os
 import sys
 import io
+import hashlib
+import json
 import h5py
 
 import numpy as np
@@ -273,6 +275,8 @@ class FileAudioDataset(RawAudioDataset):
         noise=False,
         train_mode='train',
         feature_cache_root: str = "",
+        norm_mode: str = "audioset",
+        norm_stats_path: str = "",
         **mask_compute_kwargs,
     ):
         super().__init__(
@@ -302,14 +306,75 @@ class FileAudioDataset(RawAudioDataset):
             if feature_cache_root
             else ""
         )
-        self.norm_mean = AUDIOSET_MEAN
-        self.norm_std = AUDIOSET_STD
-        if self.esc50_eval:
-            self.norm_mean = -6.627
-            self.norm_std = 5.359
-        if self.spcv2_eval:
-            self.norm_mean = -6.846
-            self.norm_std = 5.565
+        self.norm_mode = norm_mode
+        self.norm_stats_path = (
+            os.path.abspath(os.path.expanduser(norm_stats_path))
+            if norm_stats_path
+            else ""
+        )
+        self.norm_stats_sha256 = ""
+        if self.norm_mode == "audioset":
+            self.norm_mean = AUDIOSET_MEAN
+            self.norm_std = AUDIOSET_STD
+            if self.esc50_eval:
+                self.norm_mean = -6.627
+                self.norm_std = 5.359
+            if self.spcv2_eval:
+                self.norm_mean = -6.846
+                self.norm_std = 5.565
+        elif self.norm_mode == "fold":
+            if not self.norm_stats_path:
+                raise ValueError("norm_mode='fold' requires norm_stats_path")
+            try:
+                with open(self.norm_stats_path, "r", encoding="utf-8") as stream:
+                    stats = json.load(stream)
+            except (OSError, ValueError) as exc:
+                raise ValueError(
+                    f"Could not read norm stats {self.norm_stats_path}: {exc}"
+                ) from exc
+            expected = {
+                "stats_schema": "eat2emo-ser-fbank-v1",
+                "target_length": self.target_length,
+                "mel_bins": 128,
+                "sample_rate": 16000,
+                "normalization_scope": "valid_frames",
+                "padding_included": False,
+            }
+            mismatches = {
+                key: (value, stats.get(key))
+                for key, value in expected.items()
+                if stats.get(key) != value
+            }
+            if mismatches:
+                raise ValueError(
+                    f"norm stats mismatch for {self.norm_stats_path}: {mismatches}"
+                )
+            stats_manifest = stats.get("manifest")
+            if isinstance(stats_manifest, str) and stats_manifest:
+                try:
+                    with open(stats_manifest, "rb") as stream:
+                        stats_manifest_sha256 = hashlib.sha256(stream.read()).hexdigest()
+                except OSError:
+                    stats_manifest_sha256 = None
+                if (
+                    stats_manifest_sha256 is not None
+                    and stats.get("manifest_sha256") != stats_manifest_sha256
+                ):
+                    raise ValueError(
+                        f"norm stats {self.norm_stats_path} does not match "
+                        f"its declared manifest {stats_manifest}"
+                    )
+            mel = stats.get("mel")
+            if not isinstance(mel, dict):
+                raise ValueError(f"norm stats missing mel object: {self.norm_stats_path}")
+            self.norm_mean = float(mel["mean"])
+            self.norm_std = float(mel["std"])
+            if not (self.norm_std > 0):
+                raise ValueError(f"norm stats std must be positive: {self.norm_stats_path}")
+            with open(self.norm_stats_path, "rb") as stream:
+                self.norm_stats_sha256 = hashlib.sha256(stream.read()).hexdigest()
+        else:
+            raise ValueError(f"Unsupported norm_mode: {self.norm_mode}")
 
         skipped = 0
         self.fnames = []
@@ -382,7 +447,10 @@ class FileAudioDataset(RawAudioDataset):
         safe = os.path.normpath(fn.replace("\\", "/"))
         if os.path.isabs(safe) or safe == ".." or safe.startswith("../"):
             return None
-        namespace = f"tl{self.target_length}_mean{self.norm_mean}_std{self.norm_std}"
+        if self.norm_mode == "fold":
+            namespace = f"tl{self.target_length}_stats{self.norm_stats_sha256[:16]}"
+        else:
+            namespace = f"tl{self.target_length}_mean{self.norm_mean}_std{self.norm_std}"
         return os.path.join(self.feature_cache_root, namespace, safe + ".npy")
 
     def _load_cached_feature(self, path):
@@ -469,19 +537,36 @@ class FileAudioDataset(RawAudioDataset):
                 frame_shift=10,
             ).unsqueeze(dim=0)
 
-            n_frames = feats.shape[1]
-            diff = self.target_length - n_frames
-            if diff > 0:
-                m = torch.nn.ZeroPad2d((0, 0, 0, diff))
-                feats = m(feats)
-            elif diff < 0:
-                feats = feats[:, 0:self.target_length, :]
+            if self.norm_mode == "fold":
+                # Reference SER convention: normalize only valid frames and
+                # leave padding at exact zero.  Statistics were computed on
+                # this same valid-frame set.
+                valid_frames = min(feats.shape[1], self.target_length)
+                feats = feats[:, :valid_frames, :]
+                feats = (feats - self.norm_mean) / (self.norm_std * 2)
+                if use_noise:
+                    feats = feats + torch.rand(feats.shape[1], feats.shape[2]) * np.random.rand() / 10
+                    feats = torch.roll(feats, np.random.randint(-10, 10), 1)
+                if valid_frames < self.target_length:
+                    feats = F.pad(
+                        feats,
+                        (0, 0, 0, self.target_length - valid_frames),
+                        value=0.0,
+                    )
+            else:
+                n_frames = feats.shape[1]
+                diff = self.target_length - n_frames
+                if diff > 0:
+                    m = torch.nn.ZeroPad2d((0, 0, 0, diff))
+                    feats = m(feats)
+                elif diff < 0:
+                    feats = feats[:, 0:self.target_length, :]
 
-            feats = (feats - self.norm_mean) / (self.norm_std * 2)
+                feats = (feats - self.norm_mean) / (self.norm_std * 2)
 
-            if use_noise:
-                feats = feats + torch.rand(feats.shape[1], feats.shape[2]) * np.random.rand() / 10
-                feats = torch.roll(feats, np.random.randint(-10, 10), 1)
+                if use_noise:
+                    feats = feats + torch.rand(feats.shape[1], feats.shape[2]) * np.random.rand() / 10
+                    feats = torch.roll(feats, np.random.randint(-10, 10), 1)
 
         return feats
 

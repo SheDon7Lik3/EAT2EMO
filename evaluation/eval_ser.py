@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from sklearn import metrics as sklearn_metrics
 
 AUDIOSET_NORM_MEAN = -4.268
 AUDIOSET_NORM_STD = 4.569
+NORM_STATS_SCHEMA = "eat2emo-ser-fbank-v1"
 DATASET_ALIASES = {
     "emodb": "emodb",
     "emo-db": "emodb",
@@ -367,12 +369,14 @@ class SerDataset:
         target_length: int,
         norm_mean: float,
         norm_std: float,
+        norm_mode: str = "audioset",
     ) -> None:
         self.paths = tuple(paths)
         self.targets = tuple(int(target) for target in targets)
         self.target_length = target_length
         self.norm_mean = norm_mean
         self.norm_std = norm_std
+        self.norm_mode = norm_mode
 
     def __len__(self) -> int:
         return len(self.paths)
@@ -409,12 +413,21 @@ class SerDataset:
             dither=0.0,
             frame_shift=10,
         ).unsqueeze(0)
-        difference = self.target_length - features.shape[1]
-        if difference > 0:
-            features = torch_functional.pad(features, (0, 0, 0, difference))
-        elif difference < 0:
-            features = features[:, : self.target_length, :]
-        features = (features - self.norm_mean) / (self.norm_std * 2)
+        if self.norm_mode == "fold":
+            valid_frames = min(features.shape[1], self.target_length)
+            features = features[:, :valid_frames, :]
+            features = (features - self.norm_mean) / (self.norm_std * 2)
+            if valid_frames < self.target_length:
+                features = torch_functional.pad(
+                    features, (0, 0, 0, self.target_length - valid_frames)
+                )
+        else:
+            difference = self.target_length - features.shape[1]
+            if difference > 0:
+                features = torch_functional.pad(features, (0, 0, 0, difference))
+            elif difference < 0:
+                features = features[:, : self.target_length, :]
+            features = (features - self.norm_mean) / (self.norm_std * 2)
         return features, self.targets[index]
 
 
@@ -443,6 +456,7 @@ def run_inference(args: argparse.Namespace, manifest: ManifestData):
             args.target_length,
             args.norm_mean,
             args.norm_std,
+            norm_mode=args.norm_mode,
         ),
         batch_size=args.batch_size,
         num_workers=args.num_workers,
@@ -498,6 +512,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-length", type=int)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--norm-mode", choices=("audioset", "fold"), default="audioset")
+    parser.add_argument("--norm-stats-path", type=Path)
     parser.add_argument("--norm-mean", type=float, default=AUDIOSET_NORM_MEAN)
     parser.add_argument("--norm-std", type=float, default=AUDIOSET_NORM_STD)
     parser.add_argument("--device")
@@ -535,10 +551,49 @@ def main() -> None:
         args.target_length = DEFAULT_TARGET_LENGTHS[args.dataset]
     if args.target_length <= 0:
         parser.error("--target-length must be positive")
-    if not math.isclose(args.norm_mean, AUDIOSET_NORM_MEAN) or not math.isclose(
-        args.norm_std, AUDIOSET_NORM_STD
-    ):
-        parser.error("SER evaluation is frozen to the EAT AudioSet normalization")
+    args.norm_stats_sha256 = ""
+    if args.norm_mode == "fold":
+        if args.norm_stats_path is None:
+            parser.error("--norm-stats-path is required with --norm-mode fold")
+        stats_path = args.norm_stats_path.expanduser().resolve()
+        try:
+            stats = json.loads(stats_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            parser.error(f"could not read --norm-stats-path: {exc}")
+        expected = {
+            "stats_schema": NORM_STATS_SCHEMA,
+            "target_length": args.target_length,
+            "mel_bins": 128,
+            "sample_rate": 16000,
+            "normalization_scope": "valid_frames",
+            "padding_included": False,
+        }
+        mismatches = {
+            key: (value, stats.get(key))
+            for key, value in expected.items()
+            if stats.get(key) != value
+        }
+        if mismatches:
+            parser.error(f"invalid norm stats metadata: {mismatches}")
+        stats_split = stats.get("split")
+        if stats_split not in ("train", "inner_train"):
+            parser.error(f"unexpected norm stats split: {stats_split!r}")
+        stats_manifest = args.data / f"{stats_split}.tsv"
+        manifest_sha256 = hashlib.sha256(stats_manifest.read_bytes()).hexdigest()
+        if stats.get("manifest_sha256") != manifest_sha256:
+            parser.error("norm stats do not match their training manifest")
+        mel = stats.get("mel")
+        if not isinstance(mel, dict):
+            parser.error("norm stats missing mel object")
+        args.norm_mean = float(mel["mean"])
+        args.norm_std = float(mel["std"])
+        args.norm_stats_path = stats_path
+        args.norm_stats_sha256 = hashlib.sha256(stats_path.read_bytes()).hexdigest()
+    else:
+        if not math.isclose(args.norm_mean, AUDIOSET_NORM_MEAN) or not math.isclose(
+            args.norm_std, AUDIOSET_NORM_STD
+        ):
+            parser.error("SER evaluation is frozen to the EAT AudioSet normalization")
     if args.device is None:
         try:
             import torch
@@ -568,8 +623,11 @@ def main() -> None:
             args.fixed_epochs if args.protocol == "fixed" else args.selected_epoch
         ),
         "target_length": args.target_length,
+        "norm_mode": args.norm_mode,
         "norm_mean": args.norm_mean,
         "norm_std": args.norm_std,
+        "norm_stats_path": str(args.norm_stats_path) if args.norm_stats_path else None,
+        "norm_stats_sha256": args.norm_stats_sha256,
         "checkpoint": str(args.checkpoint.resolve()),
     }
     result = save_evaluation_artifacts(

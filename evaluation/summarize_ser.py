@@ -153,20 +153,39 @@ def _load_fold_result(metrics_path: Path) -> FoldResult:
         raise ValueError(f"invalid num_classes for {dataset}: {metrics_path}")
     if payload.get("target_length") != DEFAULT_TARGET_LENGTHS[dataset]:
         raise ValueError(f"invalid target_length for {dataset}: {metrics_path}")
+    norm_mode = payload.get("norm_mode", "audioset")
+    if norm_mode not in ("audioset", "fold"):
+        raise ValueError(f"invalid norm_mode: {metrics_path}")
     norm_mean = payload.get("norm_mean")
     norm_std = payload.get("norm_std")
     if (
         isinstance(norm_mean, bool)
         or not isinstance(norm_mean, (int, float))
-        or not math.isclose(float(norm_mean), AUDIOSET_NORM_MEAN)
+        or not math.isfinite(float(norm_mean))
     ):
-        raise ValueError(f"non-AudioSet norm_mean: {metrics_path}")
+        raise ValueError(f"invalid norm_mean: {metrics_path}")
     if (
         isinstance(norm_std, bool)
         or not isinstance(norm_std, (int, float))
-        or not math.isclose(float(norm_std), AUDIOSET_NORM_STD)
+        or not math.isfinite(float(norm_std))
+        or float(norm_std) <= 0
     ):
-        raise ValueError(f"non-AudioSet norm_std: {metrics_path}")
+        raise ValueError(f"invalid norm_std: {metrics_path}")
+    if norm_mode == "audioset":
+        if not math.isclose(float(norm_mean), AUDIOSET_NORM_MEAN) or not math.isclose(
+            float(norm_std), AUDIOSET_NORM_STD
+        ):
+            raise ValueError(f"non-AudioSet norm values in audioset mode: {metrics_path}")
+    else:
+        if not isinstance(payload.get("norm_stats_path"), str) or not payload["norm_stats_path"]:
+            raise ValueError(f"fold mode requires norm_stats_path: {metrics_path}")
+        norm_stats_sha256 = payload.get("norm_stats_sha256")
+        if (
+            not isinstance(norm_stats_sha256, str)
+            or len(norm_stats_sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in norm_stats_sha256)
+        ):
+            raise ValueError(f"fold mode requires norm_stats_sha256: {metrics_path}")
 
     prediction_path = metrics_path.with_name("predictions.npz")
     paths_path = metrics_path.with_name("paths.txt")
@@ -312,6 +331,9 @@ def _validate_run_grid(
     configs = {str(result.payload["config"]) for result in results}
     if len(configs) != 1:
         raise ValueError("results from different configs cannot be aggregated")
+    norm_modes = {str(result.payload.get("norm_mode", "audioset")) for result in results}
+    if len(norm_modes) != 1:
+        raise ValueError("results from different norm modes cannot be aggregated")
     if protocol == "fixed":
         epochs = {int(result.payload["fixed_epochs"]) for result in results}
         if len(epochs) != 1:
@@ -470,6 +492,7 @@ def aggregate_results(
         "dataset": dataset,
         "protocol": protocol,
         "config": str(sorted_results[0].payload["config"]),
+        "norm_mode": str(sorted_results[0].payload.get("norm_mode", "audioset")),
         "fixed_epochs": fixed_epoch_value,
         "expected_folds": list(expected_folds),
         "expected_seeds": list(expected_seeds),

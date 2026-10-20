@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import tempfile
@@ -83,6 +84,48 @@ class SerProtocolTest(unittest.TestCase):
             self.assertIn("--fixed-epochs 60", stdout)
             self.assertIn("--norm-mean -4.268 --norm-std 4.569", stdout)
             self.assertFalse(output_root.exists())
+
+    def test_fold_norm_mode_requires_stats_and_passes_stats_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data_root = root / "data"
+            self.make_split(data_root, "emodb", 1, "train", 33)
+            self.make_split(data_root, "emodb", 1, "valid", 4)
+            stats_dir = data_root / "norm_stats" / "emodb" / "fixed"
+            stats_dir.mkdir(parents=True)
+            manifest = data_root / "manifests/emodb/fold_01/train.tsv"
+            stats = {
+                "stats_schema": "eat2emo-ser-fbank-v1",
+                "dataset": "emodb",
+                "fold": 1,
+                "stage": "fixed",
+                "split": "train",
+                "target_length": 640,
+                "mel_bins": 128,
+                "sample_rate": 16000,
+                "normalization_scope": "valid_frames",
+                "padding_included": False,
+                "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                "mel": {"mean": -5.0, "std": 4.0},
+            }
+            stats_path = stats_dir / "fold_01.json"
+            stats_path.write_text(json.dumps(stats), encoding="utf-8")
+            code, stdout, stderr = self.run_main(
+                [
+                    "--dataset", "emodb", "--fold", "1", "--protocol", "fixed",
+                    "--fixed-epochs", "1", "--norm-mode", "fold",
+                    "--data-root", str(data_root), "--output-root", str(root / "runs"),
+                    "--dry-run",
+                ]
+            )
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertIn('"norm_mode": "fold"', stdout)
+            self.assertIn("task.norm_mode=fold", stdout)
+            self.assertIn("task.norm_stats_path=", stdout)
+            self.assertIn("norm_stats/emodb/fixed/fold_01.json", stdout)
+            self.assertIn("_foldnorm_fixedep1", stdout)
+            self.assertIn("--norm-mode fold", stdout)
+            self.assertIn("--norm-stats-path", stdout)
 
     def test_nested_selection_uses_inner_splits_and_smoke_override(self):
         with tempfile.TemporaryDirectory() as temporary:
