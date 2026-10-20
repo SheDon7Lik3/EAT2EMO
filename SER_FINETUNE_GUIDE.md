@@ -31,6 +31,8 @@ export PYTHONDONTWRITEBYTECODE=1
 默认预训练权重为 `/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_pt.pt`，可用 `SER_PRETRAINED` 覆盖。
 
 > 本仓库 `datasets/` 下的本地数据和 `datasets/manifests/*` 是旧 `train/eval/test` 快照，不是当前 nested/fixed 协议的输入；正式流程只使用服务器 `SER_DATASET`。
+>
+> 训练默认启用 **fbank 特征缓存**：首次 run 在 `${SER_DATA_ROOT}/feature_cache/<dataset>/...` 写入 `.npy`，后续 epoch/fold/seed 直接复用；`roll_aug/noise` 训练会自动绕过缓存。缓存会把一次 fbank 的数值结果固定下来（与实时计算差异约 1e-7），正式对比时不要混用 cached / non-cached 结果；删除该目录可重建。
 
 ## 3. 生成并审计 manifests
 

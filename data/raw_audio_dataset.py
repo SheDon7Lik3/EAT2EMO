@@ -272,6 +272,7 @@ class FileAudioDataset(RawAudioDataset):
         roll_mag_aug=False,
         noise=False,
         train_mode='train',
+        feature_cache_root: str = "",
         **mask_compute_kwargs,
     ):
         super().__init__(
@@ -296,6 +297,19 @@ class FileAudioDataset(RawAudioDataset):
         self.noise = noise
         self.train_mode = train_mode
         self.is_train_split = train_mode in {"train", "inner_train"}
+        self.feature_cache_root = (
+            os.path.abspath(os.path.expanduser(feature_cache_root))
+            if feature_cache_root
+            else ""
+        )
+        self.norm_mean = AUDIOSET_MEAN
+        self.norm_std = AUDIOSET_STD
+        if self.esc50_eval:
+            self.norm_mean = -6.627
+            self.norm_std = 5.359
+        if self.spcv2_eval:
+            self.norm_mean = -6.846
+            self.norm_std = 5.565
 
         skipped = 0
         self.fnames = []
@@ -361,19 +375,44 @@ class FileAudioDataset(RawAudioDataset):
         # print("skipped_index: {}".format(self.skipped_indices))
         # print(len(self.skipped_indices))
 
-    # two file format. h5_format = true -> .h5(.hdf5) ; h5_format = false -> .wav
-    def __getitem__(self, index):
-        import soundfile as sf
+    # Two file formats: h5_format=True -> .h5/.hdf5; h5_format=False -> .wav.
+    def _feature_cache_path(self, fn: str):
+        if not self.feature_cache_root or not self.wav2fbank:
+            return None
+        safe = os.path.normpath(fn.replace("\\", "/"))
+        if os.path.isabs(safe) or safe == ".." or safe.startswith("../"):
+            return None
+        namespace = f"tl{self.target_length}_mean{self.norm_mean}_std{self.norm_std}"
+        return os.path.join(self.feature_cache_root, namespace, safe + ".npy")
 
-        fn = self.fnames[index]
-        fn = fn if isinstance(self.fnames, list) else fn.as_py()
-        fn = self.text_compressor.decompress(fn)
-        path_or_fp = os.path.join(self.root_dir, fn)
-        _path, slice_ptr = parse_path(path_or_fp)
-        if len(slice_ptr) == 2:
-            byte_data = read_from_stored_zip(_path, slice_ptr[0], slice_ptr[1])   # root/10.h5/***.wav
-            assert is_sf_audio_data(byte_data)
-            path_or_fp = io.BytesIO(byte_data)
+    def _load_cached_feature(self, path):
+        if not path or not os.path.isfile(path):
+            return None
+        try:
+            feats = torch.from_numpy(np.load(path, allow_pickle=False)).float()
+        except Exception as exc:
+            logger.warning("Failed to load feature cache %s: %s", path, exc)
+            return None
+        expected = (1, self.target_length, 128)
+        if tuple(feats.shape) != expected:
+            logger.warning(
+                "Ignoring feature cache with shape %s (expected %s): %s",
+                tuple(feats.shape), expected, path,
+            )
+            return None
+        return feats
+
+    def _store_cached_feature(self, path, feats):
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            temporary = f"{path}.tmp.{os.getpid()}.npy"
+            np.save(temporary, feats.detach().cpu().numpy())
+            os.replace(temporary, path)
+        except Exception as exc:
+            logger.warning("Failed to write feature cache %s: %s", path, exc)
+
+    def _read_features(self, path_or_fp, use_roll, use_noise):
+        import soundfile as sf
 
         try:
             if self.h5_format and self.is_train_split:
@@ -413,47 +452,58 @@ class FileAudioDataset(RawAudioDataset):
                     feats, orig_freq=curr_sample_rate, new_freq=SER_SAMPLE_RATE
                 )
             curr_sample_rate = SER_SAMPLE_RATE
-            
-        # whether to use roll augmentation on waveform
-        use_roll = self.roll_mag_aug and self.is_train_split
-        
+
         feats = self.postprocess(feats, curr_sample_rate, use_roll)
 
         # convert waveform to spectrogram
         if self.wav2fbank:
             feats = feats.unsqueeze(dim=0)
-            feats = torchaudio.compliance.kaldi.fbank(feats, htk_compat=True, sample_frequency=curr_sample_rate, use_energy=False,
-                                                  window_type='hanning', num_mel_bins=128, dither=0.0, frame_shift=10).unsqueeze(dim=0)
-            
-            # padding 
+            feats = torchaudio.compliance.kaldi.fbank(
+                feats,
+                htk_compat=True,
+                sample_frequency=curr_sample_rate,
+                use_energy=False,
+                window_type='hanning',
+                num_mel_bins=128,
+                dither=0.0,
+                frame_shift=10,
+            ).unsqueeze(dim=0)
+
             n_frames = feats.shape[1]
             diff = self.target_length - n_frames
             if diff > 0:
-                m = torch.nn.ZeroPad2d((0, 0, 0, diff)) 
+                m = torch.nn.ZeroPad2d((0, 0, 0, diff))
                 feats = m(feats)
-                
             elif diff < 0:
-                feats = feats[:,0:self.target_length,:]     
-                
-            # global normalization for AS
-            self.norm_mean = AUDIOSET_MEAN
-            self.norm_std = AUDIOSET_STD
-            
-            # global normalization for ESC-50
-            if self.esc50_eval:
-                self.norm_mean = -6.627
-                self.norm_std = 5.359
-                
-            # global normalization for spcv2
-            if self.spcv2_eval:
-                self.norm_mean = -6.846
-                self.norm_std = 5.565
-                
-            feats = (feats - self.norm_mean) / (self.norm_std * 2) 
-            
-            if self.noise and self.is_train_split:
+                feats = feats[:, 0:self.target_length, :]
+
+            feats = (feats - self.norm_mean) / (self.norm_std * 2)
+
+            if use_noise:
                 feats = feats + torch.rand(feats.shape[1], feats.shape[2]) * np.random.rand() / 10
                 feats = torch.roll(feats, np.random.randint(-10, 10), 1)
+
+        return feats
+
+    def __getitem__(self, index):
+        fn = self.fnames[index]
+        fn = fn if isinstance(self.fnames, list) else fn.as_py()
+        fn = self.text_compressor.decompress(fn)
+        path_or_fp = os.path.join(self.root_dir, fn)
+        _path, slice_ptr = parse_path(path_or_fp)
+        if len(slice_ptr) == 2:
+            byte_data = read_from_stored_zip(_path, slice_ptr[0], slice_ptr[1])
+            assert is_sf_audio_data(byte_data)
+            path_or_fp = io.BytesIO(byte_data)
+
+        use_roll = self.roll_mag_aug and self.is_train_split
+        use_noise = self.noise and self.is_train_split
+        cache_path = None if (use_roll or use_noise) else self._feature_cache_path(fn)
+        feats = self._load_cached_feature(cache_path) if cache_path else None
+        if feats is None:
+            feats = self._read_features(path_or_fp, use_roll, use_noise)
+            if cache_path:
+                self._store_cached_feature(cache_path, feats)
 
         v = {"id": index, "source": feats}
 

@@ -26,6 +26,8 @@ task:
   single_label: true
   # Required: tools/ser_protocol.py sets this per dataset.
   target_length: ???
+  # Required: tools/ser_protocol.py sets the feature cache root.
+  feature_cache_root: ???
   roll_aug: false
   noise: false
   h5_format: false

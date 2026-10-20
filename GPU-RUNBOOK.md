@@ -323,6 +323,8 @@ ravdess-song: 1012 samples, 5 folds
 - 重新生成会覆盖同路径 manifest；如果已有正式结果引用它们，不要随意重跑。
 - 本地 `datasets/manifests/*` 是旧协议，**不要上传或拷贝到服务器**。
 
+> 训练默认启用 fbank 特征缓存：首次 run 在 `${SER_DATA_ROOT}/feature_cache/<dataset>/...` 生成 `.npy`，后续 epoch/fold/seed 复用；`roll_aug/noise` 训练自动绕过。缓存与实时 fbank 的数值差异约 1e-7，正式结果不要混用 cached / non-cached；删除该目录可重建。
+
 ### 5.3 生成后抽查
 
 ```bash

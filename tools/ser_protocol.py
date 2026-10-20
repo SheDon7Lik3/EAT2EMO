@@ -61,6 +61,7 @@ class StagePlan:
     target_length: int
     num_classes: int
     data_dir: Path
+    feature_cache_dir: Path
     output_dir: Path
     pretrained: Path
     fairseq_root: Path
@@ -178,6 +179,7 @@ def build_stage_plan(
         target_length=spec.target_length,
         num_classes=spec.num_classes,
         data_dir=data_dir,
+        feature_cache_dir=args.data_root / "feature_cache" / args.dataset,
         output_dir=stage_output_dir(args, stage),
         pretrained=args.pretrained,
         fairseq_root=args.fairseq_root,
@@ -204,6 +206,7 @@ def hydra_train_command(plan: StagePlan) -> list[str]:
         f"common.tensorboard_logdir={output / 'tb'}",
         f"task.data={plan.data_dir}",
         f"task.target_length={plan.target_length}",
+        f"task.feature_cache_root={plan.feature_cache_dir}",
         f"model.model_path={plan.pretrained}",
         f"model.num_classes={plan.num_classes}",
         f"model.target_length={plan.target_length}",
