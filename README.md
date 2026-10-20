@@ -57,7 +57,7 @@ SER 使用 EAT 编码器的 CLS token 做单标签分类，数据划分为 speak
 
 | 数据集 | 类别数 | fold | 默认 target_length |
 |---|---:|---|---:|
-| EMO-DB | 7 | 1–10 | 512 |
+| EMO-DB | 7 | 1–10 | 640 |
 | IEMOCAP-5531 | 4 | 1–5 | 1024 |
 | RAVDESS-Speech | 8 | 0–4 | 512 |
 | RAVDESS-Song | 6 | 0–4 | 640 |

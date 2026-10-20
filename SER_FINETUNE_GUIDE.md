@@ -6,7 +6,7 @@
 
 | 数据集 | 类别数 | fold | 默认长度 | nested 选择上限 |
 |---|---:|---|---:|---:|
-| EMO-DB | 7 | 1–10 | 512 | 80 epochs |
+| EMO-DB | 7 | 1–10 | 640 | 80 epochs |
 | IEMOCAP-5531 | 4 | 1–5 | 1024 | 20 epochs |
 | RAVDESS-Speech | 8 | 0–4 | 512 | 80 epochs |
 | RAVDESS-Song | 6 | 0–4 | 640 | 80 epochs |

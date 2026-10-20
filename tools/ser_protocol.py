@@ -36,7 +36,7 @@ class DatasetSpec:
 
 
 DATASETS = {
-    "emodb": DatasetSpec(7, 512, 1, 10, 80),
+    "emodb": DatasetSpec(7, 640, 1, 10, 80),
     "iemocap": DatasetSpec(4, 1024, 1, 5, 20),
     "ravdess-speech": DatasetSpec(8, 512, 0, 4, 80),
     "ravdess-song": DatasetSpec(6, 640, 0, 4, 80),

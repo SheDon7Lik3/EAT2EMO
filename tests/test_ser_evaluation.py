@@ -65,7 +65,7 @@ def save_fold(
         "fixed_epochs": fixed_epochs if protocol == "fixed" else None,
         "selected_epoch": 3 if protocol == "nested" else None,
         "trained_epochs": fixed_epochs if protocol == "fixed" else 3,
-        "target_length": 512 if dataset == "emodb" else 1024,
+        "target_length": 640 if dataset == "emodb" else 1024,
         "norm_mean": -4.268,
         "norm_std": 4.569,
     }

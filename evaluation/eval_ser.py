@@ -43,7 +43,7 @@ EXPECTED_FOLDS = {
     "ravdess-song": tuple(range(5)),
 }
 DEFAULT_TARGET_LENGTHS = {
-    "emodb": 512,
+    "emodb": 640,
     "iemocap": 1024,
     "ravdess-speech": 512,
     "ravdess-song": 640,

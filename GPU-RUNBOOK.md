@@ -55,7 +55,7 @@
 
 | 数据集 | 服务器目录 | WAV 数 | 类别 | 默认 target_length | fold |
 |---|---|---:|---:|---:|---|
-| EMO-DB | `SER_DATASET/EMODB` | 535 | 7 | 512 | 1–10 |
+| EMO-DB | `SER_DATASET/EMODB` | 535 | 7 | 640 | 1–10 |
 | IEMOCAP-5531 | `SER_DATASET/IEMOCAP-5531/Session1..5` | 5531 | 4 | 1024 | 1–5 |
 | RAVDESS-Speech | `SER_DATASET/RAVDESS-Speech/Actor_01..24` | 1440 | 8 | 512 | 0–4 |
 | RAVDESS-Song | `SER_DATASET/RAVDESS-Song/Actor_01..24`（无 Actor_18） | 1012 | 6 | 640 | 0–4 |

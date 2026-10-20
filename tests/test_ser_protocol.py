@@ -31,7 +31,7 @@ class SerProtocolTest(unittest.TestCase):
 
     def test_frozen_dataset_defaults(self):
         expected = {
-            "emodb": (7, 512, 1, 10, 80),
+            "emodb": (7, 640, 1, 10, 80),
             "iemocap": (4, 1024, 1, 5, 20),
             "ravdess-speech": (8, 512, 0, 4, 80),
             "ravdess-song": (6, 640, 0, 4, 80),
