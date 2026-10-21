@@ -82,6 +82,12 @@ bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 
 批量入口支持 `--datasets`、`--seeds`、`--folds`（单值、逗号列表或 `all`）、`--norm-mode audioset|fold` 和 `--num-workers`；显式 fold 子集会跳过自动 summary。`fold` 模式需要先生成 `$SER_DATA_ROOT/norm_stats/...`。
 
+查看正在跑的实验进度：
+
+```bash
+$PYTHON_BIN tools/ser_status.py --root "$SER_OUTPUT_ROOT" --watch 5
+```
+
 服务器上先按 [GPU-RUNBOOK.md](./GPU-RUNBOOK.md) §4.1 导出环境变量；不要用系统默认 `python`。
 
 ## Upstream EAT

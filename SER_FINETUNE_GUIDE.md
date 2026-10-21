@@ -62,6 +62,12 @@ bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 \
 
 `audioset` 和 `fold` 会自动使用不同 config 名/缓存目录，不能混表汇总。
 
+查看运行进度（不用手动找嵌套目录）：
+
+```bash
+$PYTHON_BIN tools/ser_status.py --root "$SER_OUTPUT_ROOT" --watch 5
+```
+
 ### 1.2 使用 AS-2M fine-tuned 权重
 
 官方 AS-2M fine-tuned checkpoint 是分类 wrapper，带 527 类 `head` 和 `fc_norm`，
