@@ -518,6 +518,11 @@ def execute_stage(plan: StagePlan, selected_epoch: int | None, dry_run: bool) ->
     train_env = os.environ.copy()
     if plan.wandb_project:
         train_env["WANDB_NAME"] = plan.wandb_run_name
+        # Keep all folds/seeds of one dataset/protocol/config together in W&B.
+        train_env["WANDB_RUN_GROUP"] = (
+            f"{plan.dataset}-{plan.protocol}-{plan.config_name}"
+        )
+        train_env["WANDB_JOB_TYPE"] = plan.stage
     run_and_tee(command, plan.output_dir / "train.log", env=train_env)
     if plan.stage == "selection":
         best_epoch, history = select_best_epoch(plan.output_dir, plan.epochs)

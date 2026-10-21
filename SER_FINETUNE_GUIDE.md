@@ -142,6 +142,17 @@ ravdess-speech-fixed-fold00-seed3949-fixed-EAT-base_epoch30_ft_encoder
 
 可用 `--wandb-run-name` 覆盖。
 
+多折/多 seed 时，每个 fold-run 是独立的 W&B run，不会自动合并：
+
+```text
+group:    <dataset>-<protocol>-<config>
+job_type: fixed / selection / final
+run name: 包含 fold、seed、stage 和 checkpoint 名
+```
+
+例如 RAVDESS-Speech fixed 5 folds × 5 seeds 会产生 25 个 run，同一个 group 下；
+nested 的 selection 和 final 是同一个 group 下的两个 job_type。
+
 ## 2. 路径与环境
 
 ```bash
