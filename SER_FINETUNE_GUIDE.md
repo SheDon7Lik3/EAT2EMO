@@ -122,6 +122,26 @@ bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60 \
 
 W&B 记录训练曲线；最终 `metrics.json` 仍保存在本地结果目录。
 
+默认 run name 格式：
+
+```text
+<dataset>-<protocol>-fold<XX>-seed<SEED>-<stage>-<checkpoint stem>
+```
+
+例如 pretrained：
+
+```text
+ravdess-speech-fixed-fold00-seed3949-fixed-EAT-base_epoch30_pt
+```
+
+AS-2M ft：
+
+```text
+ravdess-speech-fixed-fold00-seed3949-fixed-EAT-base_epoch30_ft_encoder
+```
+
+可用 `--wandb-run-name` 覆盖。
+
 ## 2. 路径与环境
 
 ```bash

@@ -226,7 +226,7 @@ def build_stage_plan(
         norm_stats_path=norm_stats_path,
         wandb_project=args.wandb_project or None,
         wandb_run_name=args.wandb_run_name
-        or f"{args.dataset}-{args.protocol}-fold{args.fold:02d}-seed{args.seed}-{stage}",
+        or f"{args.dataset}-{args.protocol}-fold{args.fold:02d}-seed{args.seed}-{stage}-{args.pretrained.stem}",
         output_dir=stage_output_dir(args, stage),
         pretrained=args.pretrained,
         fairseq_root=args.fairseq_root,
