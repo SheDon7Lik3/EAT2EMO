@@ -62,7 +62,15 @@ bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 \
 
 `audioset` 和 `fold` 会自动使用不同 config 名/缓存目录，不能混表汇总。
 
-查看运行进度（不用手动找嵌套目录）：
+前台运行并自动刷新进度：
+
+```bash
+SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO \
+  bash scripts/run_SER.sh --dataset ravdess-speech --fold 0 --seed 3949 \
+  --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12
+```
+
+也可以在另一个终端查看已有运行：
 
 ```bash
 $PYTHON_BIN tools/ser_status.py --root "$SER_OUTPUT_ROOT" --watch 5
