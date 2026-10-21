@@ -82,18 +82,13 @@ bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 
 批量入口支持 `--datasets`、`--seeds`、`--folds`（单值、逗号列表或 `all`）、`--norm-mode audioset|fold` 和 `--num-workers`；显式 fold 子集会跳过自动 summary。`fold` 模式需要先生成 `$SER_DATA_ROOT/norm_stats/...`。
 
-前台运行并自动显示进度（推荐）：
+训练进度和曲线使用 W&B：
 
 ```bash
 SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO \
-  bash scripts/run_SER.sh --dataset ravdess-speech --fold 0 --seed 3949 \
-  --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12
-```
-
-也可以在另一个终端查看已有运行：
-
-```bash
-$PYTHON_BIN tools/ser_status.py --root "$SER_OUTPUT_ROOT" --watch 5
+  bash scripts/finetuning_SER.sh --dataset ravdess-speech --fold 0 --seed 3949 \
+  --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12 \
+  --wandb-project eat2emo-ser
 ```
 
 服务器上先按 [GPU-RUNBOOK.md](./GPU-RUNBOOK.md) §4.1 导出环境变量；不要用系统默认 `python`。

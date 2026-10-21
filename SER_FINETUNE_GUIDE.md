@@ -62,19 +62,6 @@ bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 \
 
 `audioset` 和 `fold` 会自动使用不同 config 名/缓存目录，不能混表汇总。
 
-前台运行并自动刷新进度：
-
-```bash
-SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO \
-  bash scripts/run_SER.sh --dataset ravdess-speech --fold 0 --seed 3949 \
-  --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12
-```
-
-也可以在另一个终端查看已有运行：
-
-```bash
-$PYTHON_BIN tools/ser_status.py --root "$SER_OUTPUT_ROOT" --watch 5
-```
 
 ### 1.2 使用 AS-2M fine-tuned 权重
 
@@ -107,7 +94,7 @@ AS-2M 权重属于独立初始化实验，不能和 pretrained 结果混表。
 训练时加 `--wandb-project` 即可自动上传：
 
 ```bash
-bash scripts/run_SER.sh \
+bash scripts/finetuning_SER.sh \
   --dataset ravdess-speech --fold 0 --seed 3949 \
   --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12 \
   --wandb-project eat2emo-ser
