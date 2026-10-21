@@ -500,8 +500,8 @@ bash scripts/run_all_SER.sh --protocol nested
 # fixed：4 个数据集，seeds 3949,42,2026,1024,666，60 epoch
 bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 
-# fixed + fold 归一化（需先生成 norm_stats）
-bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60 --norm-mode fold
+# fixed + fold 归一化（需先生成 norm_stats）；12 workers 实测略快
+bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12
 ```
 
 只跑部分数据集/seed/fold：

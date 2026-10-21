@@ -176,11 +176,13 @@ bash scripts/run_all_SER.sh \
   --seeds 3949,42 \
   --folds 1,2 \
   --protocol nested \
-  --norm-mode fold
+  --norm-mode fold \
+  --num-workers 12
 ```
 
 - `--seeds all`：全部 5 个参考 seed（默认）；`--seeds 3949`：只跑一个。
 - `--folds all`：每个数据集自己的 full range；`--folds 1` 或 `--folds 1,2`：只跑指定折。
+- `--num-workers`：DataLoader worker 数，默认 6；IEMOCAP 实测 12 略快（约 4%），16 没有继续收益。
 - 显式 fold 必须对每个选中的 dataset 合法（EMO-DB 1–10、IEMOCAP 1–5、RAVDESS 0–4），否则在启动前报错。
 
 只有 `--folds all` 时才会在数据集完成后自动严格汇总；显式 fold 子集会跳过自动 summary，per-fold 的 `metrics.json` 仍保留。也可手动执行：

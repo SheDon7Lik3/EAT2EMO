@@ -58,6 +58,7 @@ class StagePlan:
     updates_per_epoch: int
     max_updates: int
     warmup_updates: int
+    num_workers: int
     target_length: int
     num_classes: int
     data_dir: Path
@@ -124,6 +125,8 @@ def resolve_config_name(args: argparse.Namespace) -> str:
         return name
     if args.norm_mode == "fold":
         name = f"{name}_foldnorm"
+    if args.num_workers < 0:
+        raise ValueError("--num-workers must be non-negative")
     if args.protocol == "fixed" and args.fixed_epochs != DEFAULT_FIXED_EPOCHS:
         return f"{name}_fixedep{args.fixed_epochs}"
     default_selection_epochs = DATASETS[args.dataset].selection_epochs
@@ -212,6 +215,7 @@ def build_stage_plan(
         updates_per_epoch=updates_per_epoch,
         max_updates=max_updates,
         warmup_updates=warmup_updates,
+        num_workers=args.num_workers,
         target_length=spec.target_length,
         num_classes=spec.num_classes,
         data_dir=data_dir,
@@ -253,6 +257,7 @@ def hydra_train_command(plan: StagePlan) -> list[str]:
         f"dataset.valid_subset={fairseq_valid_subset}",
         f"dataset.disable_validation={str(not validation_enabled).lower()}",
         f"dataset.batch_size={BATCH_SIZE}",
+        f"dataset.num_workers={plan.num_workers}",
         "dataset.validate_interval=1",
         f"optimization.max_epoch={plan.epochs}",
         f"optimization.max_update={plan.max_updates}",
@@ -551,6 +556,12 @@ def make_parser() -> argparse.ArgumentParser:
         "--selection-max-epochs",
         type=positive_int,
         help="override the dataset default (intended for smoke tests)",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=int(os.environ.get("SER_NUM_WORKERS", "6")),
+        help="DataLoader workers for training (default: 6 or SER_NUM_WORKERS)",
     )
     parser.add_argument("--dry-run", action="store_true", help="validate inputs and print commands only")
     parser.add_argument(

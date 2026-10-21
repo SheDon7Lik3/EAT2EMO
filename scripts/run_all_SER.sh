@@ -20,10 +20,11 @@ NORM_MODE="audioset"
 STAGE="all"
 FIXED_EPOCHS="60"
 SELECTION_MAX_EPOCHS=""
+NUM_WORKERS="${SER_NUM_WORKERS:-6}"
 DRY_RUN=false
 
 usage() {
-  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol nested|fixed] [--norm-mode audioset|fold] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
+  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol nested|fixed] [--norm-mode audioset|fold] [--num-workers N] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
   echo "Defaults: all four datasets; seeds ${DEFAULT_SEEDS}; folds all."
   echo "Completed formal runs are strictly summarized per dataset/protocol/config; partial folds skip the automatic summary."
 }
@@ -35,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --folds) FOLDS="${2:-}"; shift 2 ;;
     --protocol) PROTOCOL="${2:-}"; shift 2 ;;
     --norm-mode) NORM_MODE="${2:-}"; shift 2 ;;
+    --num-workers) NUM_WORKERS="${2:-}"; shift 2 ;;
     --stage) STAGE="${2:-}"; shift 2 ;;
     --fixed-epochs) FIXED_EPOCHS="${2:-}"; shift 2 ;;
     --selection-max-epochs) SELECTION_MAX_EPOCHS="${2:-}"; shift 2 ;;
@@ -49,6 +51,7 @@ done
 
 [[ "$PROTOCOL" == nested || "$PROTOCOL" == fixed ]] || { echo "Invalid protocol: $PROTOCOL" >&2; exit 2; }
 [[ "$NORM_MODE" == audioset || "$NORM_MODE" == fold ]] || { echo "Invalid norm mode: $NORM_MODE" >&2; exit 2; }
+[[ "$NUM_WORKERS" =~ ^[0-9]+$ ]] || { echo "Invalid num workers: $NUM_WORKERS" >&2; exit 2; }
 [[ "$STAGE" == all || "$STAGE" == select || "$STAGE" == final ]] || { echo "Invalid stage: $STAGE" >&2; exit 2; }
 [[ "$FIXED_EPOCHS" =~ ^[1-9][0-9]*$ ]] || { echo "--fixed-epochs must be positive" >&2; exit 2; }
 if [[ -n "$SELECTION_MAX_EPOCHS" && ! "$SELECTION_MAX_EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
@@ -173,6 +176,7 @@ for dataset in "${dataset_list[@]}"; do
         --seed "$seed"
         --protocol "$PROTOCOL"
         --norm-mode "$NORM_MODE"
+        --num-workers "$NUM_WORKERS"
         --fixed-epochs "$FIXED_EPOCHS"
         --data-root "$SER_DATA_ROOT"
         --output-root "$SER_OUTPUT_ROOT"
