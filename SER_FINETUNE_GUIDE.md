@@ -62,6 +62,32 @@ bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 \
 
 `audioset` 和 `fold` 会自动使用不同 config 名/缓存目录，不能混表汇总。
 
+### 1.2 使用 AS-2M fine-tuned 权重
+
+官方 AS-2M fine-tuned checkpoint 是分类 wrapper，带 527 类 `head` 和 `fc_norm`，
+不能直接作为 `model_path`。先用工具把它合并回 pretrained checkpoint 的 encoder 格式：
+
+```bash
+$PYTHON_BIN tools/prepare_eat_checkpoint.py \
+  --source /root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_ft.pt \
+  --base /root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_pt.pt \
+  --output /root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_ft_encoder.pt \
+  --overwrite
+```
+
+输出会保留 pretrained checkpoint 的 15 个 pretraining-only key，只替换 150 个
+encoder tensor；源文件不会被修改。
+
+然后指定转换后的 checkpoint：
+
+```bash
+export SER_PRETRAINED=/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_ft_encoder.pt
+bash scripts/finetuning_SER.sh --dataset ravdess-speech --fold 0 --seed 3949 \
+  --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12
+```
+
+AS-2M 权重属于独立初始化实验，不能和 pretrained 结果混表。
+
 ## 2. 路径与环境
 
 ```bash
