@@ -39,14 +39,14 @@ def read_manifest(run_dir: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def read_epochs(train_log: Path) -> tuple[int, dict | None, float | None]:
-    if not train_log.is_file():
-        return 0, None, None
-    count = 0
-    latest = None
-    latest_time = None
-    for line in train_log.read_text(encoding="utf-8", errors="replace").splitlines():
-        if "[train]" not in line or '"epoch"' not in line:
+def _read_epoch_records(path: Path) -> list[tuple[dict, float | None]]:
+    if not path.is_file():
+        return []
+    records = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if "[train]" not in line and "[train_inner]" not in line:
+            continue
+        if '"epoch"' not in line:
             continue
         start = line.find("{")
         if start < 0:
@@ -55,19 +55,40 @@ def read_epochs(train_log: Path) -> tuple[int, dict | None, float | None]:
             record = json.loads(line[start:])
         except json.JSONDecodeError:
             continue
-        if "epoch" not in record:
+        if not isinstance(record, dict) or "epoch" not in record:
             continue
-        count += 1
-        latest = record
         stamp = TIMESTAMP.match(line)
+        timestamp = None
         if stamp:
             try:
-                latest_time = datetime.strptime(
+                timestamp = datetime.strptime(
                     stamp.group(1), "%Y-%m-%d %H:%M:%S,%f"
                 ).timestamp()
             except ValueError:
-                latest_time = None
-    return count, latest, latest_time
+                pass
+        records.append((record, timestamp))
+    return records
+
+
+def read_progress(run_dir: Path) -> tuple[int, int, dict | None, float | None, bool]:
+    """Return (completed_epochs, current_epoch, latest, timestamp, done)."""
+    sources = [
+        run_dir / "train.log",
+        run_dir / "hydra" / "hydra_train.log",
+    ]
+    records = []
+    for path in sources:
+        records.extend(_read_epoch_records(path))
+    hydra_log = run_dir / "hydra" / "hydra_train.log"
+    done = hydra_log.is_file() and "done training" in hydra_log.read_text(
+        encoding="utf-8", errors="replace"
+    )
+    if not records:
+        return 0, 0, None, None, done
+    latest = records[-1][0]
+    latest_time = records[-1][1]
+    epochs = sorted({int(record["epoch"]) for record, _ in records})
+    return len(epochs), max(epochs), latest, latest_time, done
 
 
 def process_running(run_dir: Path) -> bool:
@@ -121,7 +142,7 @@ def render(run_dir: Path | None) -> str:
 
     manifest = read_manifest(run_dir)
     train_log = run_dir / "train.log"
-    completed, latest, latest_time = read_epochs(train_log)
+    completed, current_epoch, latest, latest_time, done = read_progress(run_dir)
     total = int(manifest.get("epochs", 0) or 0)
     running = process_running(run_dir)
     metrics = read_metrics(run_dir)
@@ -131,14 +152,25 @@ def render(run_dir: Path | None) -> str:
         f"seed={manifest.get('seed')}  stage={manifest.get('stage')}",
         f"Protocol: {manifest.get('protocol')}  norm={manifest.get('norm_mode')}  "
         f"target={manifest.get('target_length')}  workers={manifest.get('num_workers')}",
-        f"Epochs:   {completed}/{total}" if total else f"Epochs:   {completed}",
-        f"State:    {'RUNNING' if running else 'not running'}",
+        (
+            f"Epochs:   {current_epoch}/{total} (completed {completed})"
+            if total
+            else f"Epochs:   {current_epoch} (completed {completed})"
+        ),
+        f"State:    {'RUNNING' if running else ('DONE' if done else 'not running')}",
         f"GPU:      {gpu_status()}",
     ]
     if latest is not None:
         keep = {
             key: latest.get(key)
-            for key in ("epoch", "train_loss", "train_num_updates", "train_wps")
+            for key in (
+                "epoch",
+                "train_loss",
+                "loss",
+                "train_num_updates",
+                "num_updates",
+                "train_wps",
+            )
             if key in latest
         }
         lines.append(f"Latest:   {json.dumps(keep, ensure_ascii=False)}")
