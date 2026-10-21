@@ -102,6 +102,26 @@ bash scripts/finetuning_SER.sh --dataset ravdess-speech --fold 0 --seed 3949 \
 
 AS-2M 权重属于独立初始化实验，不能和 pretrained 结果混表。
 
+### 1.3 Weights & Biases
+
+训练时加 `--wandb-project` 即可自动上传：
+
+```bash
+bash scripts/run_SER.sh \
+  --dataset ravdess-speech --fold 0 --seed 3949 \
+  --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12 \
+  --wandb-project eat2emo-ser
+```
+
+服务器上的 W&B 已登录，默认项目是 `eat2emo-ser`。批量入口也支持：
+
+```bash
+bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60 \
+  --norm-mode fold --num-workers 12 --wandb-project eat2emo-ser
+```
+
+W&B 记录训练曲线；最终 `metrics.json` 仍保存在本地结果目录。
+
 ## 2. 路径与环境
 
 ```bash

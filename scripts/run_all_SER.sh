@@ -21,10 +21,11 @@ STAGE="all"
 FIXED_EPOCHS="60"
 SELECTION_MAX_EPOCHS=""
 NUM_WORKERS="${SER_NUM_WORKERS:-6}"
+WANDB_PROJECT="${SER_WANDB_PROJECT:-}"
 DRY_RUN=false
 
 usage() {
-  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol nested|fixed] [--norm-mode audioset|fold] [--num-workers N] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
+  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol nested|fixed] [--norm-mode audioset|fold] [--num-workers N] [--wandb-project NAME] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
   echo "Defaults: all four datasets; seeds ${DEFAULT_SEEDS}; folds all."
   echo "Completed formal runs are strictly summarized per dataset/protocol/config; partial folds skip the automatic summary."
 }
@@ -37,6 +38,7 @@ while [[ $# -gt 0 ]]; do
     --protocol) PROTOCOL="${2:-}"; shift 2 ;;
     --norm-mode) NORM_MODE="${2:-}"; shift 2 ;;
     --num-workers) NUM_WORKERS="${2:-}"; shift 2 ;;
+    --wandb-project) WANDB_PROJECT="${2:-}"; shift 2 ;;
     --stage) STAGE="${2:-}"; shift 2 ;;
     --fixed-epochs) FIXED_EPOCHS="${2:-}"; shift 2 ;;
     --selection-max-epochs) SELECTION_MAX_EPOCHS="${2:-}"; shift 2 ;;
@@ -183,6 +185,9 @@ for dataset in "${dataset_list[@]}"; do
       )
       if $CONFIG_NAME_EXPLICIT; then
         command+=(--config-name "$SER_CONFIG_NAME")
+      fi
+      if [[ -n "$WANDB_PROJECT" ]]; then
+        command+=(--wandb-project "$WANDB_PROJECT")
       fi
       if [[ "$PROTOCOL" == nested ]]; then
         command+=(--stage "$STAGE")

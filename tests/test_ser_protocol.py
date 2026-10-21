@@ -127,6 +127,23 @@ class SerProtocolTest(unittest.TestCase):
             self.assertIn("--norm-mode fold", stdout)
             self.assertIn("--norm-stats-path", stdout)
 
+    def test_wandb_project_is_passed_to_fairseq(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data_root = root / "data"
+            self.make_split(data_root, "emodb", 1, "train", 33)
+            self.make_split(data_root, "emodb", 1, "valid", 4)
+            code, stdout, stderr = self.run_main(
+                [
+                    "--dataset", "emodb", "--fold", "1", "--protocol", "fixed",
+                    "--data-root", str(data_root), "--output-root", str(root / "runs"),
+                    "--wandb-project", "eat2emo-test", "--dry-run",
+                ]
+            )
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertIn('"wandb_project": "eat2emo-test"', stdout)
+            self.assertIn("common.wandb_project=eat2emo-test", stdout)
+
     def test_nested_selection_uses_inner_splits_and_smoke_override(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -344,7 +361,7 @@ class SerProtocolTest(unittest.TestCase):
 
             commands = []
 
-            def fake_run(command, log_path):
+            def fake_run(command, log_path, **kwargs):
                 commands.append(list(command))
                 if str(command[1]).endswith("hydra_train.py"):
                     overrides = {

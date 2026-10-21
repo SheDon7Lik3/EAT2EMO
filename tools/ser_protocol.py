@@ -65,6 +65,8 @@ class StagePlan:
     feature_cache_dir: Path
     norm_mode: str
     norm_stats_path: Path | None
+    wandb_project: str | None
+    wandb_run_name: str
     output_dir: Path
     pretrained: Path
     fairseq_root: Path
@@ -222,6 +224,9 @@ def build_stage_plan(
         feature_cache_dir=args.data_root / "feature_cache" / args.dataset,
         norm_mode=args.norm_mode,
         norm_stats_path=norm_stats_path,
+        wandb_project=args.wandb_project or None,
+        wandb_run_name=args.wandb_run_name
+        or f"{args.dataset}-{args.protocol}-fold{args.fold:02d}-seed{args.seed}-{stage}",
         output_dir=stage_output_dir(args, stage),
         pretrained=args.pretrained,
         fairseq_root=args.fairseq_root,
@@ -272,6 +277,8 @@ def hydra_train_command(plan: StagePlan) -> list[str]:
     ]
     if plan.norm_stats_path is not None:
         command.append(f"task.norm_stats_path={plan.norm_stats_path}")
+    if plan.wandb_project:
+        command.append(f"common.wandb_project={plan.wandb_project}")
     return command
 
 
@@ -402,7 +409,7 @@ def write_run_manifest(plan: StagePlan, command: Sequence[str], selected_epoch: 
     write_json(plan.output_dir / "run_manifest.json", payload)
 
 
-def run_and_tee(command: Sequence[str], log_path: Path) -> None:
+def run_and_tee(command: Sequence[str], log_path: Path, env: dict | None = None) -> None:
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
             list(command),
@@ -411,6 +418,7 @@ def run_and_tee(command: Sequence[str], log_path: Path) -> None:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=env,
         )
         assert process.stdout is not None
         for line in process.stdout:
@@ -507,7 +515,10 @@ def execute_stage(plan: StagePlan, selected_epoch: int | None, dry_run: bool) ->
 
     plan.output_dir.mkdir(parents=True, exist_ok=False)
     write_run_manifest(plan, command, selected_epoch)
-    run_and_tee(command, plan.output_dir / "train.log")
+    train_env = os.environ.copy()
+    if plan.wandb_project:
+        train_env["WANDB_NAME"] = plan.wandb_run_name
+    run_and_tee(command, plan.output_dir / "train.log", env=train_env)
     if plan.stage == "selection":
         best_epoch, history = select_best_epoch(plan.output_dir, plan.epochs)
         score_by_epoch = {int(row["epoch"]): float(row["uar"]) for row in history}
@@ -563,6 +574,8 @@ def make_parser() -> argparse.ArgumentParser:
         default=int(os.environ.get("SER_NUM_WORKERS", "6")),
         help="DataLoader workers for training (default: 6 or SER_NUM_WORKERS)",
     )
+    parser.add_argument("--wandb-project", default=None)
+    parser.add_argument("--wandb-run-name", default=None)
     parser.add_argument("--dry-run", action="store_true", help="validate inputs and print commands only")
     parser.add_argument(
         "--data-root",
