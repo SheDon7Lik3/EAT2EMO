@@ -39,6 +39,20 @@ done
 $SER_DATA_ROOT/norm_stats/<dataset>/<stage>/fold_XX.json
 ```
 
+可选：提前生成训练特征缓存，避免正式 run 第一个 epoch 冷启动：
+
+```bash
+for ds in emodb iemocap ravdess-speech ravdess-song; do
+  for stage in fixed selection final; do
+    $PYTHON_BIN tools/precompute_ser_features.py \
+      --dataset "$ds" --all-folds --stage "$stage"
+  done
+done
+```
+
+`fixed/final` 缓存 `train`，`selection` 缓存 `inner_train` 和 `inner_valid`；缓存写在
+`$SER_DATA_ROOT/feature_cache/<dataset>/tl<T>_stats<hash>/`。
+
 正式使用 `fold` 模式：
 
 ```bash

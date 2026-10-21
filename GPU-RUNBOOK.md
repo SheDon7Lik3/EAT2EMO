@@ -460,6 +460,17 @@ done
 统计量只累计对应训练 split 的有效帧，输出到
 `$SER_DATA_ROOT/norm_stats/<dataset>/<stage>/fold_XX.json`。
 
+预生成训练特征缓存（可选，避免首个 epoch 冷启动）：
+
+```bash
+for ds in emodb iemocap ravdess-speech ravdess-song; do
+  for stage in fixed selection final; do
+    $PYTHON_BIN tools/precompute_ser_features.py \
+      --dataset "$ds" --all-folds --stage "$stage"
+  done
+done
+```
+
 ### 7.2 正式批量
 
 长跑先开 `screen`（服务器没有 `tmux`）：
