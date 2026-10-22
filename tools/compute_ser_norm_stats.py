@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compute per-fold/per-stage SER fbank normalization statistics.
+"""Compute per-fold SER fbank normalization statistics for inner_train.
 
 Statistics are accumulated over valid frames only (after target-length
 truncation, before padding).  Audio preprocessing matches the training loader:
@@ -31,11 +31,8 @@ from ser_protocol import DATASETS, fold_dir_name  # noqa: E402
 
 
 STATS_SCHEMA = "eat2emo-ser-fbank-v1"
-STAGE_SPLITS = {
-    "fixed": "train",
-    "selection": "inner_train",
-    "final": "train",
-}
+STATS_STAGE = "selection"
+STATS_SPLIT = "inner_train"
 DEFAULT_DATA_ROOT = os.environ.get(
     "SER_DATA_ROOT", "/root/songhao/datasets/SER_DATASET"
 )
@@ -146,20 +143,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", choices=sorted(DATASETS), required=True)
     parser.add_argument("--fold", type=int)
     parser.add_argument("--all-folds", action="store_true")
-    parser.add_argument(
-        "--stage",
-        choices=tuple(STAGE_SPLITS),
-        default="fixed",
-        help="fixed/final use train; selection uses inner_train",
-    )
     parser.add_argument("--data-root", type=Path, default=Path(DEFAULT_DATA_ROOT))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--overwrite", action="store_true")
     return parser
 
 
-def output_path(data_root: Path, dataset: str, stage: str, fold: int) -> Path:
-    return data_root / "norm_stats" / dataset / stage / f"{fold_dir_name(fold)}.json"
+def output_path(data_root: Path, dataset: str, fold: int) -> Path:
+    return data_root / "norm_stats" / dataset / STATS_STAGE / f"{fold_dir_name(fold)}.json"
 
 
 def main() -> None:
@@ -178,7 +169,7 @@ def main() -> None:
         raise SystemExit("--output can only be used with a single --fold")
 
     data_root = args.data_root.expanduser().resolve()
-    split = STAGE_SPLITS[args.stage]
+    split = STATS_SPLIT
     for fold in folds:
         manifest_dir = (
             data_root / "manifests" / args.dataset / fold_dir_name(fold)
@@ -193,7 +184,7 @@ def main() -> None:
             "stats_schema": STATS_SCHEMA,
             "dataset": args.dataset,
             "fold": fold,
-            "stage": args.stage,
+            "stage": STATS_STAGE,
             "split": split,
             "target_length": spec.target_length,
             "mel_bins": 128,
@@ -213,9 +204,7 @@ def main() -> None:
             "manifest": str(manifest_path),
             "manifest_sha256": manifest_sha256,
         }
-        destination = args.output or output_path(
-            data_root, args.dataset, args.stage, fold
-        )
+        destination = args.output or output_path(data_root, args.dataset, fold)
         destination = destination.expanduser().resolve()
         if destination.exists() and not args.overwrite:
             raise FileExistsError(
@@ -227,7 +216,7 @@ def main() -> None:
             encoding="utf-8",
         )
         print(
-            f"{args.dataset} fold {fold} {args.stage}: "
+            f"{args.dataset} fold {fold} {STATS_STAGE}: "
             f"mean={stats['mean']:.6f} std={stats['std']:.6f} "
             f"var={stats['variance']:.6f} samples={len(entries)} "
             f"valid_frames={stats['count'] // 128}"

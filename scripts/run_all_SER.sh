@@ -15,21 +15,16 @@ DATASETS="emodb,iemocap,ravdess-speech,ravdess-song"
 DEFAULT_SEEDS="3949,42,2026,1024,666"
 SEEDS="all"
 FOLDS="all"
-PROTOCOL="nested"
 NORM_MODE="audioset"
-STAGE="all"
-FIXED_EPOCHS="60"
-SELECTION_MAX_EPOCHS=""
+MAX_EPOCHS=""
 NUM_WORKERS="${SER_NUM_WORKERS:-6}"
 WANDB_PROJECT="${SER_WANDB_PROJECT:-}"
-DIAGNOSTIC_VALIDATE_OUTER=false
 DRY_RUN=false
 
 usage() {
-  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol nested|fixed] [--norm-mode audioset|fold] [--num-workers N] [--wandb-project NAME] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--diagnostic-validate-outer] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
-  echo "Defaults: all four datasets; seeds ${DEFAULT_SEEDS}; folds all."
-  echo "Completed formal runs are strictly summarized per dataset/protocol/config; partial folds skip the automatic summary."
-  echo "--diagnostic-validate-outer is fixed-only and is never summarized as a formal result."
+  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--norm-mode audioset|fold] [--max-epochs N] [--num-workers N] [--wandb-project NAME] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
+  echo "Defaults: all four datasets; seeds ${DEFAULT_SEEDS}; folds all; dataset-specific max_epochs."
+  echo "Every fold runs the earlystop protocol and is strictly summarized per dataset/config."
 }
 
 while [[ $# -gt 0 ]]; do
@@ -37,14 +32,10 @@ while [[ $# -gt 0 ]]; do
     --datasets) DATASETS="${2:-}"; shift 2 ;;
     --seeds) SEEDS="${2:-}"; shift 2 ;;
     --folds) FOLDS="${2:-}"; shift 2 ;;
-    --protocol) PROTOCOL="${2:-}"; shift 2 ;;
     --norm-mode) NORM_MODE="${2:-}"; shift 2 ;;
+    --max-epochs) MAX_EPOCHS="${2:-}"; shift 2 ;;
     --num-workers) NUM_WORKERS="${2:-}"; shift 2 ;;
     --wandb-project) WANDB_PROJECT="${2:-}"; shift 2 ;;
-    --stage) STAGE="${2:-}"; shift 2 ;;
-    --fixed-epochs) FIXED_EPOCHS="${2:-}"; shift 2 ;;
-    --selection-max-epochs) SELECTION_MAX_EPOCHS="${2:-}"; shift 2 ;;
-    --diagnostic-validate-outer) DIAGNOSTIC_VALIDATE_OUTER=true; shift ;;
     --data-root) SER_DATA_ROOT="${2:-}"; shift 2 ;;
     --output-root) SER_OUTPUT_ROOT="${2:-}"; shift 2 ;;
     --config-name) SER_CONFIG_NAME="${2:-}"; CONFIG_NAME_EXPLICIT=true; shift 2 ;;
@@ -54,25 +45,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$PROTOCOL" == nested || "$PROTOCOL" == fixed ]] || { echo "Invalid protocol: $PROTOCOL" >&2; exit 2; }
 [[ "$NORM_MODE" == audioset || "$NORM_MODE" == fold ]] || { echo "Invalid norm mode: $NORM_MODE" >&2; exit 2; }
 [[ "$NUM_WORKERS" =~ ^[0-9]+$ ]] || { echo "Invalid num workers: $NUM_WORKERS" >&2; exit 2; }
-[[ "$STAGE" == all || "$STAGE" == select || "$STAGE" == final ]] || { echo "Invalid stage: $STAGE" >&2; exit 2; }
-[[ "$FIXED_EPOCHS" =~ ^[1-9][0-9]*$ ]] || { echo "--fixed-epochs must be positive" >&2; exit 2; }
-if [[ -n "$SELECTION_MAX_EPOCHS" && ! "$SELECTION_MAX_EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
-  echo "--selection-max-epochs must be positive" >&2
-  exit 2
-fi
-if [[ "$PROTOCOL" == fixed && "$STAGE" != all ]]; then
-  echo "--stage applies only to --protocol nested" >&2
-  exit 2
-fi
-if [[ "$PROTOCOL" == fixed && -n "$SELECTION_MAX_EPOCHS" ]]; then
-  echo "--selection-max-epochs applies only to --protocol nested" >&2
-  exit 2
-fi
-if $DIAGNOSTIC_VALIDATE_OUTER && [[ "$PROTOCOL" != fixed ]]; then
-  echo "--diagnostic-validate-outer requires --protocol fixed" >&2
+if [[ -n "$MAX_EPOCHS" && ! "$MAX_EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--max-epochs must be positive" >&2
   exit 2
 fi
 [[ -n "$SER_DATA_ROOT" && -n "$SER_OUTPUT_ROOT" ]] || { echo "Data/output roots cannot be empty" >&2; exit 2; }
@@ -147,9 +123,9 @@ fi
 
 for dataset in "${dataset_list[@]}"; do
   case "$dataset" in
-    emodb) first_fold=1; last_fold=10; default_selection_epochs=80 ;;
-    iemocap) first_fold=1; last_fold=5; default_selection_epochs=20 ;;
-    ravdess-speech|ravdess-song) first_fold=0; last_fold=4; default_selection_epochs=80 ;;
+    emodb) first_fold=1; last_fold=10; default_max_epochs=80 ;;
+    iemocap) first_fold=1; last_fold=5; default_max_epochs=20 ;;
+    ravdess-speech|ravdess-song) first_fold=0; last_fold=4; default_max_epochs=80 ;;
   esac
   fold_list=()
   if $FOLDS_ALL; then
@@ -165,17 +141,8 @@ for dataset in "${dataset_list[@]}"; do
     if [[ "$NORM_MODE" == fold ]]; then
       effective_config="${effective_config}_foldnorm"
     fi
-    if [[ "$PROTOCOL" == fixed && "$FIXED_EPOCHS" != 60 ]]; then
-      effective_config="${effective_config}_fixedep${FIXED_EPOCHS}"
-    elif [[
-      "$PROTOCOL" == nested
-      && -n "$SELECTION_MAX_EPOCHS"
-      && "$SELECTION_MAX_EPOCHS" != "$default_selection_epochs"
-    ]]; then
-      effective_config="${effective_config}_selectmaxep${SELECTION_MAX_EPOCHS}"
-    fi
-    if $DIAGNOSTIC_VALIDATE_OUTER; then
-      effective_config="${effective_config}_diagouter"
+    if [[ -n "$MAX_EPOCHS" && "$MAX_EPOCHS" != "$default_max_epochs" ]]; then
+      effective_config="${effective_config}_maxep${MAX_EPOCHS}"
     fi
   fi
 
@@ -186,27 +153,19 @@ for dataset in "${dataset_list[@]}"; do
         --dataset "$dataset"
         --fold "$fold"
         --seed "$seed"
-        --protocol "$PROTOCOL"
         --norm-mode "$NORM_MODE"
         --num-workers "$NUM_WORKERS"
-        --fixed-epochs "$FIXED_EPOCHS"
         --data-root "$SER_DATA_ROOT"
         --output-root "$SER_OUTPUT_ROOT"
       )
       if $CONFIG_NAME_EXPLICIT; then
         command+=(--config-name "$SER_CONFIG_NAME")
       fi
-      if $DIAGNOSTIC_VALIDATE_OUTER; then
-        command+=(--diagnostic-validate-outer)
+      if [[ -n "$MAX_EPOCHS" ]]; then
+        command+=(--max-epochs "$MAX_EPOCHS")
       fi
       if [[ -n "$WANDB_PROJECT" ]]; then
         command+=(--wandb-project "$WANDB_PROJECT")
-      fi
-      if [[ "$PROTOCOL" == nested ]]; then
-        command+=(--stage "$STAGE")
-        if [[ -n "$SELECTION_MAX_EPOCHS" ]]; then
-          command+=(--selection-max-epochs "$SELECTION_MAX_EPOCHS")
-        fi
       fi
       if $DRY_RUN; then
         command+=(--dry-run)
@@ -215,32 +174,24 @@ for dataset in "${dataset_list[@]}"; do
     done
   done
 
-  if [[ "$PROTOCOL" == fixed || "$STAGE" != select ]]; then
-    if $DIAGNOSTIC_VALIDATE_OUTER; then
-      echo "Diagnostic outer-valid mode; skipping automatic formal summary for ${dataset}." >&2
-    elif ! $FOLDS_ALL; then
-      echo "Partial folds selected (--folds ${FOLDS}); skipping automatic summary for ${dataset}." >&2
+  if ! $FOLDS_ALL; then
+    echo "Partial folds selected (--folds ${FOLDS}); skipping automatic summary for ${dataset}." >&2
+  else
+    summary_root="${SER_OUTPUT_ROOT}/${dataset}/earlystop/${effective_config}"
+    summary_command=(
+      "$PYTHON_BIN" "${EAT_ROOT}/evaluation/summarize_ser.py"
+      "$summary_root"
+      --dataset "$dataset"
+      --config "$effective_config"
+      --expected-seeds "$SEEDS_CSV"
+      --output "${summary_root}/summary.json"
+    )
+    if $DRY_RUN; then
+      printf 'SUMMARY:'
+      printf ' %q' "${summary_command[@]}"
+      printf '\n'
     else
-      summary_root="${SER_OUTPUT_ROOT}/${dataset}/${PROTOCOL}/${effective_config}"
-      summary_command=(
-        "$PYTHON_BIN" "${EAT_ROOT}/evaluation/summarize_ser.py"
-        "$summary_root"
-        --dataset "$dataset"
-        --protocol "$PROTOCOL"
-        --config "$effective_config"
-        --expected-seeds "$SEEDS_CSV"
-        --output "${summary_root}/summary.json"
-      )
-      if [[ "$PROTOCOL" == fixed ]]; then
-        summary_command+=(--fixed-epochs "$FIXED_EPOCHS")
-      fi
-      if $DRY_RUN; then
-        printf 'SUMMARY:'
-        printf ' %q' "${summary_command[@]}"
-        printf '\n'
-      else
-        "${summary_command[@]}"
-      fi
+      "${summary_command[@]}"
     fi
   fi
 done

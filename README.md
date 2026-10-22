@@ -13,7 +13,7 @@ Internal project: EAT audio encoder + Speech Emotion Recognition (SER) fine-tuni
 ## What this repo is
 
 - 基于 [EAT](https://github.com/cwx-worst-one/EAT) 的音频自监督编码器，使用 EAT-base epoch30 预训练权重。
-- 在本仓库中增加了 SER 微调协议：EMO-DB、IEMOCAP-5531、RAVDESS-Speech、RAVDESS-Song，支持 nested / fixed 两种协议。
+- 在本仓库中增加了 SER 微调协议：EMO-DB、IEMOCAP-5531、RAVDESS-Speech、RAVDESS-Song，统一使用 `earlystop` 协议。
 - 训练、评测、汇总的入口在 `scripts/`、`tools/`、`evaluation/`；具体约定见 SER 指南。
 - AudioSet 预训练、AS-2M/AS-20K/ESC-50/SPC-2 微调和 AudioSet 推理仍以上游 EAT 仓库为准；本仓库不再保留这些上游启动脚本和配置。
 
@@ -53,14 +53,23 @@ $PYTHON_BIN feature_extract/feature_extract.py \
 
 ## Speech Emotion Recognition
 
-SER 使用 EAT 编码器的 CLS token 做单标签分类，数据划分为 speaker/session-independent。支持：
+SER 使用 EAT 编码器的 CLS token 做单标签分类，数据划分为 speaker/session-independent。统一协议：
 
-| 数据集 | 类别数 | fold | 默认 target_length |
-|---|---:|---|---:|
-| EMO-DB | 7 | 1–10 | 640 |
-| IEMOCAP-5531 | 4 | 1–5 | 1024 |
-| RAVDESS-Speech | 8 | 0–4 | 512 |
-| RAVDESS-Song | 6 | 0–4 | 640 |
+```text
+train:  inner_train
+valid:  inner_valid，用于选 best checkpoint
+test:   outer-valid，只评估一次
+选模:   best inner-valid UAR
+```
+
+支持：
+
+| 数据集 | 类别数 | fold | 默认 target_length | 默认 max_epochs |
+|---|---:|---|---:|---:|
+| EMO-DB | 7 | 1–10 | 640 | 80 |
+| IEMOCAP-5531 | 4 | 1–5 | 1024 | 20 |
+| RAVDESS-Speech | 8 | 0–4 | 512 | 80 |
+| RAVDESS-Song | 6 | 0–4 | 640 | 80 |
 
 环境变量、manifest 生成、单 fold 和批量命令见 [SER_FINETUNE_GUIDE.md](./SER_FINETUNE_GUIDE.md)。最常用的入口：
 
@@ -71,35 +80,24 @@ $PYTHON_BIN tools/prepare_ser_manifests.py \
   --manifest-root "$SER_DATA_ROOT" \
   --output "$SER_DATA_ROOT/manifests"
 
-# 单 fold：nested / fixed
-bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 --protocol nested
-bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949 --protocol fixed
+# 单 fold
+bash scripts/finetuning_SER.sh --dataset emodb --fold 1 --seed 3949
 
 # 全部数据集 × 5 seeds（3949,42,2026,1024,666），并自动汇总
-bash scripts/run_all_SER.sh --protocol nested
-bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
+bash scripts/run_all_SER.sh
 ```
 
-批量入口支持 `--datasets`、`--seeds`、`--folds`（单值、逗号列表或 `all`）、`--norm-mode audioset|fold` 和 `--num-workers`；显式 fold 子集会跳过自动 summary。`fold` 模式需要先生成 `$SER_DATA_ROOT/norm_stats/...`。诊断模式 `--diagnostic-validate-outer` 只适用于 fixed，且不会进入正式 summary。
+批量入口支持 `--datasets`、`--seeds`、`--folds`（单值、逗号列表或 `all`）、`--norm-mode audioset|fold`、`--max-epochs` 和 `--num-workers`；显式 fold 子集会跳过自动 summary。`fold` 模式需要先生成 `$SER_DATA_ROOT/norm_stats/<dataset>/selection/...`。
 
 训练进度和曲线使用 W&B：
 
 ```bash
 SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO \
   bash scripts/finetuning_SER.sh --dataset ravdess-speech --fold 0 --seed 3949 \
-  --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12 \
-  --wandb-project eat2emo-ser
+  --norm-mode fold --num-workers 12 --wandb-project eat2emo-ser
 ```
 
-只看 fixed 训练的 outer-valid 逐 epoch 曲线（诊断用途，不能用于选 epoch）：
-
-```bash
-bash scripts/finetuning_SER.sh --dataset ravdess-speech --fold 0 --seed 3949 \
-  --protocol fixed --fixed-epochs 20 --norm-mode fold --num-workers 12 \
-  --diagnostic-validate-outer --wandb-project eat2emo-ser
-```
-
-诊断结果会写入 `diagnostic_history.json`，并在 `metrics.json` 标记为 diagnostic；正式 summary 会忽略它们。
+每个 fold 会写 `earlystop_summary.json`，其中包含逐 epoch inner-valid loss/accuracy/WAR/UAR/macro-F1 和 best epoch；`results/metrics.json` 是 outer-valid 的最终单次评估。
 
 服务器上先按 [GPU-RUNBOOK.md](./GPU-RUNBOOK.md) §4.1 导出环境变量；不要用系统默认 `python`。
 

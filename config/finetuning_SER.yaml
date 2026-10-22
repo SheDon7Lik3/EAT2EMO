@@ -44,8 +44,8 @@ dataset:
   batch_size: 32
   skip_invalid_size_inputs_valid_test: true
   required_batch_size_multiple: 1
-  train_subset: train
-  valid_subset: valid
+  train_subset: inner_train
+  valid_subset: inner_valid
   disable_validation: false
   validate_interval: 1
 
@@ -78,7 +78,7 @@ optimizer:
         weight_decay: 0.05
       lr_scheduler:
         _name: cosine
-        # The launcher overrides this with 10% of the per-stage max updates.
+        # The launcher overrides this with 10% of the max updates.
         warmup_updates: 0
         min_lr: 1e-6
 

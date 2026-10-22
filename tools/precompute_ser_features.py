@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Precompute SER fbank feature caches for every training split.
+"""Precompute SER fbank feature caches for the earlystop training split.
 
 This does not train.  It instantiates the same FileAudioDataset used by
 fine-tuning, which reads the per-fold norm stats and writes one .npy per source
 file under feature_cache/<dataset>/<target_length>_stats<hash>/...
 
-Relevant splits per stage:
-    fixed      -> train
-    final      -> train
-    selection  -> inner_train, inner_valid
+The earlystop protocol trains on ``inner_train``; validation and test splits
+are not cached.
 """
 
 from __future__ import annotations
@@ -29,11 +27,8 @@ from ser_protocol import DATASETS, fold_dir_name  # noqa: E402
 
 torch.set_num_threads(1)
 
-STAGE_SPLITS = {
-    "fixed": ("train",),
-    "final": ("train",),
-    "selection": ("inner_train", "inner_valid"),
-}
+STATS_STAGE = "selection"
+TRAIN_SPLIT = "inner_train"
 DEFAULT_DATA_ROOT = os.environ.get(
     "SER_DATA_ROOT", "/root/songhao/datasets/SER_DATASET"
 )
@@ -77,7 +72,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", choices=sorted(DATASETS), required=True)
     parser.add_argument("--fold", type=int)
     parser.add_argument("--all-folds", action="store_true")
-    parser.add_argument("--stage", choices=tuple(STAGE_SPLITS), required=True)
     parser.add_argument("--data-root", type=Path, default=Path(DEFAULT_DATA_ROOT))
     parser.add_argument(
         "--cache-root",
@@ -108,39 +102,38 @@ def main() -> None:
         else data_root / "feature_cache"
     ) / args.dataset
     stats_root = data_root / "norm_stats" / args.dataset
-    stats_path = stats_root / args.stage / f"{fold_dir_name(folds[0])}.json"
+    stats_path = stats_root / STATS_STAGE / f"{fold_dir_name(folds[0])}.json"
     if not stats_path.is_file():
         raise FileNotFoundError(stats_path)
 
     for fold in folds:
         folder = fold_dir_name(fold)
         manifest_dir = data_root / "manifests" / args.dataset / folder
-        fold_stats = stats_root / args.stage / f"{folder}.json"
+        fold_stats = stats_root / STATS_STAGE / f"{folder}.json"
         if not fold_stats.is_file():
             raise FileNotFoundError(fold_stats)
-        for split in STAGE_SPLITS[args.stage]:
-            manifest = manifest_dir / f"{split}.tsv"
-            if not manifest.is_file():
-                raise FileNotFoundError(manifest)
-            print(
-                f"=== {args.dataset} fold {fold} {args.stage} / {split} ===",
-                flush=True,
-            )
-            dataset = build_dataset(
-                manifest_path=manifest,
-                cache_root=cache_root,
-                stats_path=fold_stats,
-                target_length=spec.target_length,
-                split=split,
-            )
-            for index in range(len(dataset)):
-                dataset[index]
-                if (index + 1) % 500 == 0:
-                    print(
-                        f"  {index + 1}/{len(dataset)} {split} cached",
-                        flush=True,
-                    )
-            print(f"  done {len(dataset)} {split} samples", flush=True)
+        manifest = manifest_dir / f"{TRAIN_SPLIT}.tsv"
+        if not manifest.is_file():
+            raise FileNotFoundError(manifest)
+        print(
+            f"=== {args.dataset} fold {fold} {STATS_STAGE} / {TRAIN_SPLIT} ===",
+            flush=True,
+        )
+        dataset = build_dataset(
+            manifest_path=manifest,
+            cache_root=cache_root,
+            stats_path=fold_stats,
+            target_length=spec.target_length,
+            split=TRAIN_SPLIT,
+        )
+        for index in range(len(dataset)):
+            dataset[index]
+            if (index + 1) % 500 == 0:
+                print(
+                    f"  {index + 1}/{len(dataset)} {TRAIN_SPLIT} cached",
+                    flush=True,
+                )
+        print(f"  done {len(dataset)} {TRAIN_SPLIT} samples", flush=True)
 
 
 if __name__ == "__main__":

@@ -500,20 +500,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dataset", type=canonical_dataset, required=True)
-    parser.add_argument("--protocol", choices=("nested", "fixed"), required=True)
     parser.add_argument("--fold", type=parse_fold, required=True)
     parser.add_argument("--seed", type=int, required=True)
-    parser.add_argument("--stage", choices=("selection", "final", "fixed"), default="final")
-    parser.add_argument("--fixed-epochs", type=int, default=60)
-    parser.add_argument("--selected-epoch", type=int)
-    parser.add_argument(
-        "--diagnostic-outer-validation",
-        action="store_true",
-        help=(
-            "mark this fixed-protocol evaluation as diagnostic; the outer-valid "
-            "split was observed every epoch and must not be reported as formal"
-        ),
-    )
+    parser.add_argument("--selected-epoch", type=int, required=True)
+    parser.add_argument("--max-epochs", type=int, required=True)
     parser.add_argument("--config", default="eat_base_sr16k_audiosetnorm_bs32")
     parser.add_argument("--split", default="valid")
     parser.add_argument("--audio-root", type=Path)
@@ -539,24 +529,12 @@ def main() -> None:
         parser.error(
             f"--fold for {args.dataset} must be {allowed[0]}..{allowed[-1]}"
         )
-    if args.fixed_epochs <= 0:
-        parser.error("--fixed-epochs must be positive")
-    if args.selected_epoch is not None and args.selected_epoch <= 0:
+    if args.selected_epoch <= 0:
         parser.error("--selected-epoch must be positive")
-    if args.protocol == "fixed" and args.stage != "fixed":
-        parser.error("fixed protocol evaluation requires --stage fixed")
-    if args.diagnostic_outer_validation and args.protocol != "fixed":
-        parser.error("--diagnostic-outer-validation requires --protocol fixed")
-    if args.protocol == "fixed" and args.selected_epoch is not None:
-        parser.error("fixed protocol must not set --selected-epoch")
-    if args.protocol == "nested" and args.stage == "fixed":
-        parser.error("nested protocol cannot use --stage fixed")
-    if (
-        args.protocol == "nested"
-        and args.stage == "final"
-        and args.selected_epoch is None
-    ):
-        parser.error("nested final evaluation requires --selected-epoch")
+    if args.max_epochs <= 0:
+        parser.error("--max-epochs must be positive")
+    if args.selected_epoch > args.max_epochs:
+        parser.error("--selected-epoch must not exceed --max-epochs")
     if args.target_length is None:
         args.target_length = DEFAULT_TARGET_LENGTHS[args.dataset]
     if args.target_length <= 0:
@@ -621,17 +599,14 @@ def main() -> None:
     probabilities, targets, loss = run_inference(args, manifest)
     metadata = {
         "dataset": args.dataset,
-        "protocol": args.protocol,
+        "protocol": "earlystop",
         "config": args.config,
         "fold": args.fold,
         "seed": args.seed,
-        "stage": args.stage,
         "split": args.split,
-        "fixed_epochs": args.fixed_epochs if args.protocol == "fixed" else None,
-        "selected_epoch": args.selected_epoch if args.protocol == "nested" else None,
-        "trained_epochs": (
-            args.fixed_epochs if args.protocol == "fixed" else args.selected_epoch
-        ),
+        "selected_epoch": args.selected_epoch,
+        "max_epochs": args.max_epochs,
+        "trained_epochs": args.selected_epoch,
         "target_length": args.target_length,
         "norm_mode": args.norm_mode,
         "norm_mean": args.norm_mean,
@@ -639,13 +614,8 @@ def main() -> None:
         "norm_stats_path": str(args.norm_stats_path) if args.norm_stats_path else None,
         "norm_stats_sha256": args.norm_stats_sha256,
         "checkpoint": str(args.checkpoint.resolve()),
-        "diagnostic_outer_validation": args.diagnostic_outer_validation,
-        "evaluation_role": (
-            "diagnostic_repeated_outer_valid"
-            if args.diagnostic_outer_validation
-            else "formal_fixed_outer_valid"
-        ),
-        "used_for_model_selection": False,
+        "evaluation_role": "earlystop_best_inner_valid",
+        "used_for_model_selection": True,
     }
     result = save_evaluation_artifacts(
         args.output,

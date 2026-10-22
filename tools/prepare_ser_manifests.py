@@ -293,7 +293,7 @@ DATASET_SPECS = {
         expected_group_counts=dict(
             zip(EMODB_SPEAKERS, (49, 58, 43, 38, 55, 35, 61, 69, 56, 71))
         ),
-        protocol="emodb_speaker_independent_10fold_loso_nested_v1",
+        protocol="emodb_speaker_independent_10fold_loso_earlystop_v1",
         loader=load_emodb,
     ),
     "iemocap": DatasetSpec(
@@ -712,7 +712,7 @@ def build_dataset(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build strictly audited nested/fixed SER manifests"
+        description="Build strictly audited earlystop SER manifests"
     )
     parser.add_argument(
         "--datasets-root",

@@ -42,44 +42,43 @@ def save_fold(
     root,
     *,
     dataset,
-    protocol,
     fold,
     seed,
     targets,
     paths,
     probabilities=None,
     config="test_config",
-    fixed_epochs=60,
+    selected_epoch=3,
+    max_epochs=5,
     norm_mode="audioset",
     norm_mean=-4.268,
     norm_std=4.569,
     norm_stats_path=None,
     norm_stats_sha256="",
-    diagnostic_outer_validation=False,
 ):
     labels = LABELS[dataset]
     if probabilities is None:
         probabilities = probabilities_for(targets, len(labels))
-    stage = "fixed" if protocol == "fixed" else "final"
-    output = root / dataset / protocol / config / f"seed_{seed}" / f"fold_{fold:02d}" / stage / "results"
+    output = (
+        root / dataset / "earlystop" / config / f"seed_{seed}"
+        / f"fold_{fold:02d}" / "results"
+    )
     metadata = {
         "dataset": dataset,
-        "protocol": protocol,
+        "protocol": "earlystop",
         "config": config,
         "fold": fold,
         "seed": seed,
-        "stage": stage,
         "split": "valid",
-        "fixed_epochs": fixed_epochs if protocol == "fixed" else None,
-        "selected_epoch": 3 if protocol == "nested" else None,
-        "trained_epochs": fixed_epochs if protocol == "fixed" else 3,
+        "selected_epoch": selected_epoch,
+        "max_epochs": max_epochs,
+        "trained_epochs": selected_epoch,
         "target_length": 640 if dataset == "emodb" else 1024,
         "norm_mode": norm_mode,
         "norm_mean": norm_mean,
         "norm_std": norm_std,
         "norm_stats_path": norm_stats_path,
         "norm_stats_sha256": norm_stats_sha256,
-        "diagnostic_outer_validation": diagnostic_outer_validation,
     }
     save_evaluation_artifacts(
         output,
@@ -99,11 +98,13 @@ class SerMetricTest(unittest.TestCase):
             [
                 "--data", "/tmp/data", "--checkpoint", "/tmp/model.pt",
                 "--model-dir", "/tmp/model", "--output", "/tmp/output",
-                "--dataset", "iemocap", "--protocol", "nested",
-                "--fold", "1", "--seed", "1", "--selected-epoch", "3",
+                "--dataset", "iemocap", "--fold", "1", "--seed", "1",
+                "--selected-epoch", "3", "--max-epochs", "5",
             ]
         )
         self.assertEqual(args.split, "valid")
+        self.assertEqual(args.selected_epoch, 3)
+        self.assertEqual(args.max_epochs, 5)
         with tempfile.TemporaryDirectory() as directory:
             data = Path(directory)
             (data / "valid.tsv").write_text(
@@ -163,13 +164,14 @@ class SerMetricTest(unittest.TestCase):
             paths = ["Session1/second.wav", "Session1/first.wav"]
             metadata = {
                 "dataset": "iemocap",
-                "protocol": "fixed",
+                "protocol": "earlystop",
                 "config": "test_config",
                 "fold": 1,
                 "seed": 2,
-                "stage": "fixed",
                 "split": "valid",
-                "fixed_epochs": 60,
+                "selected_epoch": 3,
+                "max_epochs": 5,
+                "trained_epochs": 3,
             }
             payload = save_evaluation_artifacts(
                 output,
@@ -181,7 +183,7 @@ class SerMetricTest(unittest.TestCase):
             )
             self.assertEqual(payload["accuracy"], 1.0)
             self.assertEqual(payload["war"], 1.0)
-            self.assertEqual(payload["fixed_epochs"], 60)
+            self.assertEqual(payload["selected_epoch"], 3)
             self.assertEqual((output / "paths.txt").read_text().splitlines(), paths)
             with np.load(output / "predictions.npz", allow_pickle=False) as archive:
                 np.testing.assert_array_equal(archive["targets"], targets)
@@ -196,14 +198,12 @@ class SerMetricTest(unittest.TestCase):
                     metadata,
                 )
 
-
     def test_fold_norm_metrics_are_accepted(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             save_fold(
                 root,
                 dataset="emodb",
-                protocol="fixed",
                 fold=1,
                 seed=1,
                 targets=[0, 1],
@@ -215,47 +215,53 @@ class SerMetricTest(unittest.TestCase):
                 norm_stats_sha256="a" * 64,
             )
             metrics_path = (
-                root / "emodb" / "fixed" / "test_config" / "seed_1"
-                / "fold_01" / "fixed" / "results" / "metrics.json"
+                root / "emodb" / "earlystop" / "test_config" / "seed_1"
+                / "fold_01" / "results" / "metrics.json"
             )
             result = _load_fold_result(metrics_path)
             self.assertEqual(result.payload["norm_mode"], "fold")
             self.assertAlmostEqual(result.payload["norm_mean"], -5.0)
 
-    def test_diagnostic_outer_validation_is_excluded_from_formal_results(self):
+    def test_selected_epoch_greater_than_max_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            save_fold(
+            output = save_fold(
                 root,
-                dataset="iemocap",
-                protocol="fixed",
+                dataset="emodb",
                 fold=1,
                 seed=1,
                 targets=[0, 1],
-                paths=["fold1/a.wav", "fold1/b.wav"],
+                paths=["a.wav", "b.wav"],
+                selected_epoch=6,
+                max_epochs=5,
             )
-            diagnostic = save_fold(
+            with self.assertRaisesRegex(ValueError, "selected_epoch exceeds max_epochs"):
+                _load_fold_result(output / "metrics.json")
+
+    def test_wrong_protocol_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = save_fold(
                 root,
-                dataset="iemocap",
-                protocol="fixed",
-                fold=2,
+                dataset="emodb",
+                fold=1,
                 seed=1,
-                targets=[2, 3],
-                paths=["fold2/a.wav", "fold2/b.wav"],
-                diagnostic_outer_validation=True,
+                targets=[0, 1],
+                paths=["a.wav", "b.wav"],
             )
-            results = discover_fold_results(root, "iemocap", "fixed")
-            self.assertEqual(len(results), 1)
-            self.assertEqual(results[0].fold, 1)
-            with self.assertRaisesRegex(ValueError, "not a formal result"):
-                _load_fold_result(diagnostic / "metrics.json")
+            metrics_path = output / "metrics.json"
+            payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+            payload["protocol"] = "fixed"
+            metrics_path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid protocol"):
+                _load_fold_result(metrics_path)
 
 
 class SerAggregationTest(unittest.TestCase):
     def test_default_seeds_match_reference_protocol(self):
         self.assertEqual(DEFAULT_SEEDS, (3949, 42, 2026, 1024, 666))
 
-    def test_non_emodb_uses_fold_mean_per_seed_and_keeps_protocols_separate(self):
+    def test_non_emodb_uses_fold_mean_per_seed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fold_targets = {1: [0, 1], 2: [2, 3]}
@@ -267,34 +273,23 @@ class SerAggregationTest(unittest.TestCase):
                     save_fold(
                         root,
                         dataset="iemocap",
-                        protocol="fixed",
                         fold=fold,
                         seed=seed,
                         targets=targets,
                         probabilities=probabilities,
                         paths=[f"fold{fold}/sample{index}.wav" for index in range(2)],
                     )
-            # A different protocol under the same scan root must never be mixed in.
-            save_fold(
-                root,
-                dataset="iemocap",
-                protocol="nested",
-                fold=1,
-                seed=1,
-                targets=[0, 1],
-                paths=["nested/0.wav", "nested/1.wav"],
-            )
-            results = discover_fold_results(root, "iemocap", "fixed")
+            results = discover_fold_results(root, "iemocap")
             self.assertEqual(len(results), 4)
             summary = aggregate_results(
                 results,
                 dataset="iemocap",
-                protocol="fixed",
                 expected_folds=(1, 2),
                 expected_seeds=(1, 2),
                 expected_samples=4,
-                fixed_epochs=60,
             )
+            self.assertEqual(summary["protocol"], "earlystop")
+            self.assertEqual(summary["max_epochs"], 5)
             self.assertEqual(summary["primary"]["method"], "mean_across_folds_per_seed")
             self.assertEqual(summary["primary"]["per_seed"]["1"]["accuracy"], 1.0)
             self.assertEqual(summary["primary"]["per_seed"]["2"]["accuracy"], 0.5)
@@ -302,6 +297,7 @@ class SerAggregationTest(unittest.TestCase):
                 summary["primary"]["across_seeds"]["accuracy"]["mean"], 0.75
             )
             self.assertEqual(len(summary["fold_results"]), 4)
+            self.assertEqual(summary["fold_results"][0]["selected_epoch"], 3)
 
     def test_missing_grid_entry_and_duplicate_outer_path_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -309,18 +305,16 @@ class SerAggregationTest(unittest.TestCase):
             first = save_fold(
                 root,
                 dataset="iemocap",
-                protocol="nested",
                 fold=1,
                 seed=1,
                 targets=[0, 1],
                 paths=["shared.wav", "one.wav"],
             )
-            results = discover_fold_results(root, "iemocap", "nested")
+            results = discover_fold_results(root, "iemocap")
             with self.assertRaisesRegex(ValueError, "missing seed/fold"):
                 aggregate_results(
                     results,
                     dataset="iemocap",
-                    protocol="nested",
                     expected_folds=(1, 2),
                     expected_seeds=(1,),
                     expected_samples=4,
@@ -329,23 +323,52 @@ class SerAggregationTest(unittest.TestCase):
             save_fold(
                 root,
                 dataset="iemocap",
-                protocol="nested",
                 fold=2,
                 seed=1,
                 targets=[2, 3],
                 paths=["shared.wav", "two.wav"],
             )
-            results = discover_fold_results(root, "iemocap", "nested")
+            results = discover_fold_results(root, "iemocap")
             with self.assertRaisesRegex(ValueError, "unique paths"):
                 aggregate_results(
                     results,
                     dataset="iemocap",
-                    protocol="nested",
                     expected_folds=(1, 2),
                     expected_seeds=(1,),
                     expected_samples=4,
                 )
             self.assertTrue((first / "metrics.json").is_file())
+
+    def test_inconsistent_max_epochs_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            save_fold(
+                root,
+                dataset="iemocap",
+                fold=1,
+                seed=1,
+                targets=[0, 1],
+                paths=["a.wav", "b.wav"],
+                max_epochs=5,
+            )
+            save_fold(
+                root,
+                dataset="iemocap",
+                fold=2,
+                seed=1,
+                targets=[2, 3],
+                paths=["c.wav", "d.wav"],
+                max_epochs=6,
+            )
+            results = discover_fold_results(root, "iemocap")
+            with self.assertRaisesRegex(ValueError, "different max_epochs"):
+                aggregate_results(
+                    results,
+                    dataset="iemocap",
+                    expected_folds=(1, 2),
+                    expected_seeds=(1,),
+                    expected_samples=4,
+                )
 
     def test_emodb_primary_is_complete_535_sample_oof(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -358,7 +381,6 @@ class SerAggregationTest(unittest.TestCase):
                     save_fold(
                         root,
                         dataset="emodb",
-                        protocol="nested",
                         fold=fold,
                         seed=seed,
                         targets=targets,
@@ -366,11 +388,10 @@ class SerAggregationTest(unittest.TestCase):
                     )
                     offset += count
                 self.assertEqual(offset, 535)
-            results = discover_fold_results(root, "emodb", "nested")
+            results = discover_fold_results(root, "emodb")
             summary = aggregate_results(
                 results,
                 dataset="emodb",
-                protocol="nested",
                 expected_folds=tuple(range(1, 11)),
                 expected_seeds=(1, 2, 3, 4, 5),
                 expected_samples=535,
@@ -391,7 +412,7 @@ class SerBatchScriptTest(unittest.TestCase):
         for fold in folds:
             directory = data_root / "manifests" / dataset / f"fold_{fold:02d}"
             directory.mkdir(parents=True)
-            for split in ("train", "valid"):
+            for split in ("train", "valid", "inner_train", "inner_valid"):
                 (directory / f"{split}.tsv").write_text(
                     "/root/songhao/datasets/SER_DATASET\n"
                     f"{dataset}/fold{fold}/{split}.wav\t16000\n"
@@ -400,40 +421,7 @@ class SerBatchScriptTest(unittest.TestCase):
                     f"{split}.wav\tneutral\n"
                 )
 
-    def test_batch_dry_run_prints_strict_automatic_summary(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            data_root = root / "data"
-            output_root = root / "runs"
-            self.make_protocol_manifests(
-                data_root, "ravdess-song", range(5)
-            )
-            result = subprocess.run(
-                [
-                    "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
-                    "--datasets", "ravdess-song", "--seeds", "7",
-                    "--protocol", "fixed", "--fixed-epochs", "3",
-                    "--data-root", str(data_root),
-                    "--output-root", str(output_root),
-                    "--dry-run",
-                ],
-                cwd=PROJECT_ROOT,
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.count('"stage": "fixed"'), 5)
-            self.assertIn("/fold_00/fixed", result.stdout)
-            self.assertIn("/fold_04/fixed", result.stdout)
-            self.assertIn("SUMMARY:", result.stdout)
-            self.assertIn("--expected-seeds 7", result.stdout)
-            self.assertIn("--fixed-epochs 3", result.stdout)
-            config = "eat_base_sr16k_audiosetnorm_bs32_fixedep3"
-            self.assertIn(f'"config_name": "{config}"', result.stdout)
-            self.assertIn(str(output_root / f"ravdess-song/fixed/{config}/summary.json"), result.stdout)
-            self.assertFalse(output_root.exists())
-
-    def test_batch_diagnostic_outer_validation_is_fixed_only_and_not_summarized(self):
+    def test_batch_dry_run_prints_automatic_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             data_root = root / "data"
@@ -442,9 +430,8 @@ class SerBatchScriptTest(unittest.TestCase):
             result = subprocess.run(
                 [
                     "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
-                    "--datasets", "ravdess-song", "--seeds", "7", "--folds", "0",
-                    "--protocol", "fixed", "--fixed-epochs", "3",
-                    "--diagnostic-validate-outer",
+                    "--datasets", "ravdess-song", "--seeds", "7",
+                    "--max-epochs", "3",
                     "--data-root", str(data_root),
                     "--output-root", str(output_root),
                     "--dry-run",
@@ -454,28 +441,19 @@ class SerBatchScriptTest(unittest.TestCase):
                 capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            config = "eat_base_sr16k_audiosetnorm_bs32_fixedep3_diagouter"
+            self.assertEqual(result.stdout.count('"protocol": "earlystop"'), 5)
+            self.assertIn("/fold_00", result.stdout)
+            self.assertIn("/fold_04", result.stdout)
+            self.assertIn("SUMMARY:", result.stdout)
+            self.assertIn("--expected-seeds 7", result.stdout)
+            self.assertIn("--max-epochs 3", result.stdout)
+            config = "eat_base_sr16k_audiosetnorm_bs32_maxep3"
             self.assertIn(f'"config_name": "{config}"', result.stdout)
-            self.assertIn("dataset.disable_validation=false", result.stdout)
-            self.assertIn("dataset.valid_subset=valid", result.stdout)
-            self.assertIn("--diagnostic-outer-validation", result.stdout)
-            self.assertIn("Diagnostic outer-valid mode", result.stderr)
-            self.assertNotIn("SUMMARY:", result.stdout)
+            self.assertIn(
+                str(output_root / f"ravdess-song/earlystop/{config}/summary.json"),
+                result.stdout,
+            )
             self.assertFalse(output_root.exists())
-
-    def test_batch_rejects_diagnostic_outer_validation_for_nested(self):
-        result = subprocess.run(
-            [
-                "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
-                "--datasets", "ravdess-song", "--protocol", "nested",
-                "--diagnostic-validate-outer", "--dry-run",
-            ],
-            cwd=PROJECT_ROOT,
-            text=True,
-            capture_output=True,
-        )
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("requires --protocol fixed", result.stderr)
 
     def test_batch_default_seeds_match_reference_protocol(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -487,7 +465,6 @@ class SerBatchScriptTest(unittest.TestCase):
                 [
                     "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
                     "--datasets", "ravdess-song",
-                    "--protocol", "fixed", "--fixed-epochs", "60",
                     "--data-root", str(data_root),
                     "--output-root", str(output_root),
                     "--dry-run",
@@ -499,7 +476,6 @@ class SerBatchScriptTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             for seed in (3949, 42, 2026, 1024, 666):
                 self.assertIn(f'"seed": {seed}', result.stdout)
-            # The dry-run summary is shell-quoted with %q, so commas arrive as "\,".
             self.assertIn(
                 "--expected-seeds 3949,42,2026,1024,666",
                 result.stdout.replace("\\,", ","),
@@ -515,8 +491,7 @@ class SerBatchScriptTest(unittest.TestCase):
             result = subprocess.run(
                 [
                     "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
-                    "--datasets", "ravdess-song",
-                    "--protocol", "fixed", "--folds", "2",
+                    "--datasets", "ravdess-song", "--folds", "2",
                     "--data-root", str(data_root),
                     "--output-root", str(output_root),
                     "--dry-run",
@@ -542,7 +517,7 @@ class SerBatchScriptTest(unittest.TestCase):
                 [
                     "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
                     "--datasets", "ravdess-song", "--seeds", "3949",
-                    "--protocol", "fixed", "--folds", "0,2",
+                    "--folds", "0,2",
                     "--data-root", str(data_root),
                     "--output-root", str(output_root),
                     "--dry-run",
@@ -569,7 +544,6 @@ class SerBatchScriptTest(unittest.TestCase):
                 [
                     "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
                     "--datasets", "ravdess-song", "--seeds", "3949", "--folds", "all",
-                    "--protocol", "fixed",
                     "--data-root", str(data_root),
                     "--output-root", str(output_root),
                     "--dry-run",
@@ -608,6 +582,19 @@ class SerBatchScriptTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("Duplicate seed: 1", result.stderr)
+
+    def test_batch_rejects_invalid_max_epochs(self):
+        result = subprocess.run(
+            [
+                "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
+                "--datasets", "emodb", "--max-epochs", "0", "--dry-run",
+            ],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--max-epochs must be positive", result.stderr)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ class SerNormStatsTest(unittest.TestCase):
         soundfile.write(audio_root / "tone.wav", waveform, sample_rate, subtype="PCM_16")
         manifest_dir = root / "manifests" / "emodb" / "fold_01"
         manifest_dir.mkdir(parents=True)
-        (manifest_dir / "train.tsv").write_text(
+        (manifest_dir / "inner_train.tsv").write_text(
             f"{audio_root}\ntone.wav\t{waveform.size}\n", encoding="utf-8"
         )
         return root
@@ -31,16 +31,14 @@ class SerNormStatsTest(unittest.TestCase):
     def test_computes_valid_frame_statistics(self):
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_data(Path(directory))
-            output = root / "norm_stats" / "emodb" / "fixed" / "fold_01.json"
+            output = root / "norm_stats" / "emodb" / "selection" / "fold_01.json"
             result = subprocess.run(
                 [
                     sys.executable,
                     str(PROJECT_ROOT / "tools/compute_ser_norm_stats.py"),
                     "--dataset", "emodb",
                     "--fold", "1",
-                    "--stage", "fixed",
                     "--data-root", str(root),
-                    "--output", str(output),
                 ],
                 cwd=PROJECT_ROOT,
                 text=True,
@@ -51,8 +49,8 @@ class SerNormStatsTest(unittest.TestCase):
             self.assertEqual(payload["stats_schema"], "eat2emo-ser-fbank-v1")
             self.assertEqual(payload["dataset"], "emodb")
             self.assertEqual(payload["fold"], 1)
-            self.assertEqual(payload["stage"], "fixed")
-            self.assertEqual(payload["split"], "train")
+            self.assertEqual(payload["stage"], "selection")
+            self.assertEqual(payload["split"], "inner_train")
             self.assertEqual(payload["target_length"], 640)
             self.assertEqual(payload["mel_bins"], 128)
             self.assertEqual(payload["normalization_scope"], "valid_frames")
@@ -77,7 +75,6 @@ class SerNormStatsTest(unittest.TestCase):
                 str(PROJECT_ROOT / "tools/compute_ser_norm_stats.py"),
                 "--dataset", "emodb",
                 "--fold", "1",
-                "--stage", "fixed",
                 "--data-root", str(root),
                 "--output", str(output),
             ]
