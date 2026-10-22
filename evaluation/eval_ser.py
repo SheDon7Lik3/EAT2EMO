@@ -506,6 +506,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stage", choices=("selection", "final", "fixed"), default="final")
     parser.add_argument("--fixed-epochs", type=int, default=60)
     parser.add_argument("--selected-epoch", type=int)
+    parser.add_argument(
+        "--diagnostic-outer-validation",
+        action="store_true",
+        help=(
+            "mark this fixed-protocol evaluation as diagnostic; the outer-valid "
+            "split was observed every epoch and must not be reported as formal"
+        ),
+    )
     parser.add_argument("--config", default="eat_base_sr16k_audiosetnorm_bs32")
     parser.add_argument("--split", default="valid")
     parser.add_argument("--audio-root", type=Path)
@@ -537,6 +545,8 @@ def main() -> None:
         parser.error("--selected-epoch must be positive")
     if args.protocol == "fixed" and args.stage != "fixed":
         parser.error("fixed protocol evaluation requires --stage fixed")
+    if args.diagnostic_outer_validation and args.protocol != "fixed":
+        parser.error("--diagnostic-outer-validation requires --protocol fixed")
     if args.protocol == "fixed" and args.selected_epoch is not None:
         parser.error("fixed protocol must not set --selected-epoch")
     if args.protocol == "nested" and args.stage == "fixed":
@@ -629,6 +639,13 @@ def main() -> None:
         "norm_stats_path": str(args.norm_stats_path) if args.norm_stats_path else None,
         "norm_stats_sha256": args.norm_stats_sha256,
         "checkpoint": str(args.checkpoint.resolve()),
+        "diagnostic_outer_validation": args.diagnostic_outer_validation,
+        "evaluation_role": (
+            "diagnostic_repeated_outer_valid"
+            if args.diagnostic_outer_validation
+            else "formal_fixed_outer_valid"
+        ),
+        "used_for_model_selection": False,
     }
     result = save_evaluation_artifacts(
         args.output,

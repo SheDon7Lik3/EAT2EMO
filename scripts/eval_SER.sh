@@ -24,6 +24,7 @@ Options:
   --protocol nested|fixed       Default: nested
   --config NAME                 Default: eat_base_sr16k_audiosetnorm_bs32
   --fixed-epochs N              Default: 60 (fixed only)
+  --diagnostic-outer-validation Mark fixed result as diagnostic-only
   --selected-epoch N            Record nested selection result
   --checkpoint PATH             Default: computed run checkpoint_final.pt
   --output PATH                 Default: computed run stage/results
@@ -55,6 +56,7 @@ batch_size="32"
 num_workers="4"
 device=""
 overwrite="false"
+diagnostic_outer_validation="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --protocol) protocol="${2:-}"; shift 2 ;;
     --config) config="${2:-}"; config_explicit="true"; shift 2 ;;
     --fixed-epochs) fixed_epochs="${2:-}"; shift 2 ;;
+    --diagnostic-outer-validation) diagnostic_outer_validation="true"; shift ;;
     --selected-epoch) selected_epoch="${2:-}"; shift 2 ;;
     --checkpoint) checkpoint="${2:-}"; shift 2 ;;
     --output) output="${2:-}"; shift 2 ;;
@@ -100,9 +103,16 @@ case "$protocol" in
     if [[ "$config_explicit" == false && "$fixed_epochs" != 60 ]]; then
       config="${config}_fixedep${fixed_epochs}"
     fi
+    if [[ "$config_explicit" == false && "$diagnostic_outer_validation" == true ]]; then
+      config="${config}_diagouter"
+    fi
     ;;
   *) echo "Error: --protocol must be nested or fixed." >&2; exit 2 ;;
 esac
+if [[ "$diagnostic_outer_validation" == true && "$protocol" != fixed ]]; then
+  echo "Error: --diagnostic-outer-validation requires --protocol fixed." >&2
+  exit 2
+fi
 if [[ -n "$selected_epoch" && ! "$selected_epoch" =~ ^[1-9][0-9]*$ ]]; then
   echo "Error: --selected-epoch must be positive." >&2
   exit 2
@@ -136,6 +146,7 @@ command=(
   --num-workers "$num_workers"
 )
 [[ -z "$selected_epoch" ]] || command+=(--selected-epoch "$selected_epoch")
+[[ "$diagnostic_outer_validation" == "false" ]] || command+=(--diagnostic-outer-validation)
 [[ -z "$audio_root" ]] || command+=(--audio-root "$audio_root")
 [[ -z "$target_length" ]] || command+=(--target-length "$target_length")
 [[ -z "$device" ]] || command+=(--device "$device")

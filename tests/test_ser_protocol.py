@@ -309,6 +309,154 @@ class SerProtocolTest(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("Refusing to overwrite", stderr)
 
+    def test_fixed_diagnostic_outer_validation_enables_valid_and_isolates_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data_root = root / "data"
+            output_root = root / "runs"
+            self.make_split(data_root, "emodb", 1, "train", 33)
+            self.make_split(data_root, "emodb", 1, "valid", 4)
+            code, stdout, stderr = self.run_main(
+                [
+                    "--dataset", "emodb", "--fold", "1", "--protocol", "fixed",
+                    "--fixed-epochs", "2", "--diagnostic-validate-outer",
+                    "--wandb-project", "eat2emo-test",
+                    "--data-root", str(data_root), "--output-root", str(output_root),
+                    "--dry-run",
+                ]
+            )
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertIn('"diagnostic_outer_validation": true', stdout)
+            self.assertIn('"stage": "fixed"', stdout)
+            self.assertIn("dataset.disable_validation=false", stdout)
+            self.assertIn("dataset.valid_subset=valid", stdout)
+            self.assertIn("dataset.train_subset=train", stdout)
+            self.assertIn("--diagnostic-outer-validation", stdout)
+            self.assertIn(
+                f'"config_name": "{ser_protocol.DEFAULT_CONFIG_NAME}_fixedep2_diagouter"',
+                stdout,
+            )
+            self.assertIn("-diagouter", stdout)
+
+    def test_diagnostic_outer_validation_rejects_nested_protocol(self):
+        code, _, stderr = self.run_main(
+            [
+                "--dataset", "emodb", "--fold", "1", "--protocol", "nested",
+                "--diagnostic-validate-outer", "--dry-run",
+            ]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("requires --protocol fixed", stderr)
+
+    def test_validation_metrics_history_records_all_diagnostic_metrics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "train.log"
+            log.write_text(
+                'valid | {"epoch": 1, "valid_loss": "1.25", "valid_accuracy": "50.0", '
+                '"valid_war": "52.0", "valid_uar": "40.0", "valid_macro_f1": "45.0"}\n'
+                'valid | {"epoch": 2, "valid_loss": 0.75, "valid_accuracy": 75.0, '
+                '"valid_war": 76.0, "valid_uar": 70.0, "valid_macro_f1": 72.0}\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                ser_protocol.validation_metrics_history(log),
+                [
+                    {
+                        "epoch": 1,
+                        "loss": 1.25,
+                        "accuracy": 50.0,
+                        "war": 52.0,
+                        "uar": 40.0,
+                        "macro_f1": 45.0,
+                    },
+                    {
+                        "epoch": 2,
+                        "loss": 0.75,
+                        "accuracy": 75.0,
+                        "war": 76.0,
+                        "uar": 70.0,
+                        "macro_f1": 72.0,
+                    },
+                ],
+            )
+            self.assertEqual(
+                ser_protocol.validation_history(log),
+                [{"epoch": 1, "uar": 40.0}, {"epoch": 2, "uar": 70.0}],
+            )
+
+    def test_diagnostic_history_records_best_epochs_and_completeness(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data_root = root / "data"
+            output_root = root / "runs"
+            self.make_split(data_root, "emodb", 1, "train", 33)
+            self.make_split(data_root, "emodb", 1, "valid", 4)
+            args = ser_protocol.make_parser().parse_args(
+                [
+                    "--dataset", "emodb", "--fold", "1", "--protocol", "fixed",
+                    "--fixed-epochs", "2", "--diagnostic-validate-outer",
+                    "--data-root", str(data_root), "--output-root", str(output_root),
+                ]
+            )
+            args.config_name = ser_protocol.resolve_config_name(args)
+            plan = ser_protocol.build_stage_plan(args, "fixed", 2)
+            plan.output_dir.mkdir(parents=True)
+            ser_protocol.write_run_manifest(
+                plan, ser_protocol.hydra_train_command(plan), None
+            )
+            manifest = json.loads(
+                (plan.output_dir / "run_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(manifest["diagnostic_outer_validation"])
+            self.assertFalse(manifest["validation_disabled"])
+            self.assertEqual(manifest["fairseq_valid_subset"], "valid")
+            self.assertEqual(manifest["diagnostic_history"], "diagnostic_history.json")
+            self.assertEqual(
+                manifest["diagnostic_metrics"],
+                ["loss", "accuracy", "war", "uar", "macro_f1"],
+            )
+            log = plan.output_dir / "train.log"
+            log.write_text(
+                'valid | {"epoch": 1, "valid_loss": "2.0", "valid_accuracy": "40.0", '
+                '"valid_war": "40.0", "valid_uar": "35.0", "valid_macro_f1": "37.0"}\n'
+                'valid | {"epoch": 2, "valid_loss": "1.0", "valid_accuracy": "60.0", '
+                '"valid_war": "61.0", "valid_uar": "55.0", "valid_macro_f1": "57.0"}\n',
+                encoding="utf-8",
+            )
+            payload = ser_protocol.write_diagnostic_history(plan, log)
+            saved = json.loads(
+                (plan.output_dir / "diagnostic_history.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(saved, payload)
+            self.assertTrue(saved["diagnostic_outer_validation"])
+            self.assertFalse(saved["used_for_model_selection"])
+            self.assertTrue(saved["complete"])
+            self.assertEqual(saved["epochs_observed"], [1, 2])
+            self.assertEqual(saved["missing_metrics"], [])
+            self.assertEqual(saved["history"][1]["macro_f1"], 57.0)
+            self.assertEqual(
+                saved["best_epochs"]["loss"], {"epoch": 2, "value": 1.0}
+            )
+            self.assertEqual(
+                saved["best_epochs"]["uar"], {"epoch": 2, "value": 55.0}
+            )
+            self.assertEqual(saved["last_epoch"]["epoch"], 2)
+
+    def test_diagnostic_best_checkpoint_is_renamed_away_from_formal_name(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            (output / "checkpoint_best.pt").write_bytes(b"outer-valid-selected")
+            renamed = ser_protocol.isolate_diagnostic_best_checkpoint(output)
+            self.assertEqual(
+                renamed, output / "checkpoint_best_outer_diagnostic.pt"
+            )
+            self.assertFalse((output / "checkpoint_best.pt").exists())
+            self.assertEqual(
+                (output / "checkpoint_best_outer_diagnostic.pt").read_bytes(),
+                b"outer-valid-selected",
+            )
+            self.assertIsNone(ser_protocol.isolate_diagnostic_best_checkpoint(output))
+
     def test_validation_history_preserves_epoch_curve(self):
         with tempfile.TemporaryDirectory() as temporary:
             log = Path(temporary) / "train.log"

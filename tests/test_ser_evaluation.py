@@ -55,6 +55,7 @@ def save_fold(
     norm_std=4.569,
     norm_stats_path=None,
     norm_stats_sha256="",
+    diagnostic_outer_validation=False,
 ):
     labels = LABELS[dataset]
     if probabilities is None:
@@ -78,6 +79,7 @@ def save_fold(
         "norm_std": norm_std,
         "norm_stats_path": norm_stats_path,
         "norm_stats_sha256": norm_stats_sha256,
+        "diagnostic_outer_validation": diagnostic_outer_validation,
     }
     save_evaluation_artifacts(
         output,
@@ -219,6 +221,34 @@ class SerMetricTest(unittest.TestCase):
             result = _load_fold_result(metrics_path)
             self.assertEqual(result.payload["norm_mode"], "fold")
             self.assertAlmostEqual(result.payload["norm_mean"], -5.0)
+
+    def test_diagnostic_outer_validation_is_excluded_from_formal_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            save_fold(
+                root,
+                dataset="iemocap",
+                protocol="fixed",
+                fold=1,
+                seed=1,
+                targets=[0, 1],
+                paths=["fold1/a.wav", "fold1/b.wav"],
+            )
+            diagnostic = save_fold(
+                root,
+                dataset="iemocap",
+                protocol="fixed",
+                fold=2,
+                seed=1,
+                targets=[2, 3],
+                paths=["fold2/a.wav", "fold2/b.wav"],
+                diagnostic_outer_validation=True,
+            )
+            results = discover_fold_results(root, "iemocap", "fixed")
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].fold, 1)
+            with self.assertRaisesRegex(ValueError, "not a formal result"):
+                _load_fold_result(diagnostic / "metrics.json")
 
 
 class SerAggregationTest(unittest.TestCase):
@@ -402,6 +432,50 @@ class SerBatchScriptTest(unittest.TestCase):
             self.assertIn(f'"config_name": "{config}"', result.stdout)
             self.assertIn(str(output_root / f"ravdess-song/fixed/{config}/summary.json"), result.stdout)
             self.assertFalse(output_root.exists())
+
+    def test_batch_diagnostic_outer_validation_is_fixed_only_and_not_summarized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_root = root / "data"
+            output_root = root / "runs"
+            self.make_protocol_manifests(data_root, "ravdess-song", range(5))
+            result = subprocess.run(
+                [
+                    "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
+                    "--datasets", "ravdess-song", "--seeds", "7", "--folds", "0",
+                    "--protocol", "fixed", "--fixed-epochs", "3",
+                    "--diagnostic-validate-outer",
+                    "--data-root", str(data_root),
+                    "--output-root", str(output_root),
+                    "--dry-run",
+                ],
+                cwd=PROJECT_ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = "eat_base_sr16k_audiosetnorm_bs32_fixedep3_diagouter"
+            self.assertIn(f'"config_name": "{config}"', result.stdout)
+            self.assertIn("dataset.disable_validation=false", result.stdout)
+            self.assertIn("dataset.valid_subset=valid", result.stdout)
+            self.assertIn("--diagnostic-outer-validation", result.stdout)
+            self.assertIn("Diagnostic outer-valid mode", result.stderr)
+            self.assertNotIn("SUMMARY:", result.stdout)
+            self.assertFalse(output_root.exists())
+
+    def test_batch_rejects_diagnostic_outer_validation_for_nested(self):
+        result = subprocess.run(
+            [
+                "bash", str(PROJECT_ROOT / "scripts/run_all_SER.sh"),
+                "--datasets", "ravdess-song", "--protocol", "nested",
+                "--diagnostic-validate-outer", "--dry-run",
+            ],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requires --protocol fixed", result.stderr)
 
     def test_batch_default_seeds_match_reference_protocol(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -109,6 +109,11 @@ def _load_fold_result(metrics_path: Path) -> FoldResult:
         )
     if payload["split"] != "valid":
         raise ValueError(f"formal evaluation must use split 'valid': {metrics_path}")
+    if payload.get("diagnostic_outer_validation") is True:
+        raise ValueError(
+            "diagnostic repeated-outer-valid evaluation is not a formal result: "
+            f"{metrics_path}"
+        )
     fold = _require_int(payload, "fold")
     seed = _require_int(payload, "seed")
     if fold < 0 or seed < 0:
@@ -263,6 +268,8 @@ def discover_fold_results(
         if payload_dataset != dataset or payload.get("protocol") != protocol:
             continue
         if payload.get("stage") == "selection":
+            continue
+        if payload.get("diagnostic_outer_validation") is True:
             continue
         if config is not None and payload.get("config") != config:
             continue

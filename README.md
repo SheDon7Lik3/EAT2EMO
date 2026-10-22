@@ -80,7 +80,7 @@ bash scripts/run_all_SER.sh --protocol nested
 bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 ```
 
-批量入口支持 `--datasets`、`--seeds`、`--folds`（单值、逗号列表或 `all`）、`--norm-mode audioset|fold` 和 `--num-workers`；显式 fold 子集会跳过自动 summary。`fold` 模式需要先生成 `$SER_DATA_ROOT/norm_stats/...`。
+批量入口支持 `--datasets`、`--seeds`、`--folds`（单值、逗号列表或 `all`）、`--norm-mode audioset|fold` 和 `--num-workers`；显式 fold 子集会跳过自动 summary。`fold` 模式需要先生成 `$SER_DATA_ROOT/norm_stats/...`。诊断模式 `--diagnostic-validate-outer` 只适用于 fixed，且不会进入正式 summary。
 
 训练进度和曲线使用 W&B：
 
@@ -90,6 +90,16 @@ SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO \
   --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12 \
   --wandb-project eat2emo-ser
 ```
+
+只看 fixed 训练的 outer-valid 逐 epoch 曲线（诊断用途，不能用于选 epoch）：
+
+```bash
+bash scripts/finetuning_SER.sh --dataset ravdess-speech --fold 0 --seed 3949 \
+  --protocol fixed --fixed-epochs 20 --norm-mode fold --num-workers 12 \
+  --diagnostic-validate-outer --wandb-project eat2emo-ser
+```
+
+诊断结果会写入 `diagnostic_history.json`，并在 `metrics.json` 标记为 diagnostic；正式 summary 会忽略它们。
 
 服务器上先按 [GPU-RUNBOOK.md](./GPU-RUNBOOK.md) §4.1 导出环境变量；不要用系统默认 `python`。
 

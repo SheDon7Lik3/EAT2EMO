@@ -22,12 +22,14 @@ FIXED_EPOCHS="60"
 SELECTION_MAX_EPOCHS=""
 NUM_WORKERS="${SER_NUM_WORKERS:-6}"
 WANDB_PROJECT="${SER_WANDB_PROJECT:-}"
+DIAGNOSTIC_VALIDATE_OUTER=false
 DRY_RUN=false
 
 usage() {
-  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol nested|fixed] [--norm-mode audioset|fold] [--num-workers N] [--wandb-project NAME] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
+  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol nested|fixed] [--norm-mode audioset|fold] [--num-workers N] [--wandb-project NAME] [--stage all|select|final] [--fixed-epochs N] [--selection-max-epochs N] [--diagnostic-validate-outer] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
   echo "Defaults: all four datasets; seeds ${DEFAULT_SEEDS}; folds all."
   echo "Completed formal runs are strictly summarized per dataset/protocol/config; partial folds skip the automatic summary."
+  echo "--diagnostic-validate-outer is fixed-only and is never summarized as a formal result."
 }
 
 while [[ $# -gt 0 ]]; do
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --stage) STAGE="${2:-}"; shift 2 ;;
     --fixed-epochs) FIXED_EPOCHS="${2:-}"; shift 2 ;;
     --selection-max-epochs) SELECTION_MAX_EPOCHS="${2:-}"; shift 2 ;;
+    --diagnostic-validate-outer) DIAGNOSTIC_VALIDATE_OUTER=true; shift ;;
     --data-root) SER_DATA_ROOT="${2:-}"; shift 2 ;;
     --output-root) SER_OUTPUT_ROOT="${2:-}"; shift 2 ;;
     --config-name) SER_CONFIG_NAME="${2:-}"; CONFIG_NAME_EXPLICIT=true; shift 2 ;;
@@ -66,6 +69,10 @@ if [[ "$PROTOCOL" == fixed && "$STAGE" != all ]]; then
 fi
 if [[ "$PROTOCOL" == fixed && -n "$SELECTION_MAX_EPOCHS" ]]; then
   echo "--selection-max-epochs applies only to --protocol nested" >&2
+  exit 2
+fi
+if $DIAGNOSTIC_VALIDATE_OUTER && [[ "$PROTOCOL" != fixed ]]; then
+  echo "--diagnostic-validate-outer requires --protocol fixed" >&2
   exit 2
 fi
 [[ -n "$SER_DATA_ROOT" && -n "$SER_OUTPUT_ROOT" ]] || { echo "Data/output roots cannot be empty" >&2; exit 2; }
@@ -167,6 +174,9 @@ for dataset in "${dataset_list[@]}"; do
     ]]; then
       effective_config="${effective_config}_selectmaxep${SELECTION_MAX_EPOCHS}"
     fi
+    if $DIAGNOSTIC_VALIDATE_OUTER; then
+      effective_config="${effective_config}_diagouter"
+    fi
   fi
 
   for seed in "${seed_list[@]}"; do
@@ -186,6 +196,9 @@ for dataset in "${dataset_list[@]}"; do
       if $CONFIG_NAME_EXPLICIT; then
         command+=(--config-name "$SER_CONFIG_NAME")
       fi
+      if $DIAGNOSTIC_VALIDATE_OUTER; then
+        command+=(--diagnostic-validate-outer)
+      fi
       if [[ -n "$WANDB_PROJECT" ]]; then
         command+=(--wandb-project "$WANDB_PROJECT")
       fi
@@ -203,7 +216,9 @@ for dataset in "${dataset_list[@]}"; do
   done
 
   if [[ "$PROTOCOL" == fixed || "$STAGE" != select ]]; then
-    if ! $FOLDS_ALL; then
+    if $DIAGNOSTIC_VALIDATE_OUTER; then
+      echo "Diagnostic outer-valid mode; skipping automatic formal summary for ${dataset}." >&2
+    elif ! $FOLDS_ALL; then
       echo "Partial folds selected (--folds ${FOLDS}); skipping automatic summary for ${dataset}." >&2
     else
       summary_root="${SER_OUTPUT_ROOT}/${dataset}/${PROTOCOL}/${effective_config}"

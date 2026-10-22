@@ -65,6 +65,7 @@ class StagePlan:
     feature_cache_dir: Path
     norm_mode: str
     norm_stats_path: Path | None
+    diagnostic_outer_validation: bool
     wandb_project: str | None
     wandb_run_name: str
     output_dir: Path
@@ -121,7 +122,7 @@ def selection_max_epochs(args: argparse.Namespace) -> int:
 
 
 def resolve_config_name(args: argparse.Namespace) -> str:
-    """Keep smoke/non-default epoch runs isolated from formal defaults."""
+    """Keep smoke, diagnostic, and non-default epoch runs isolated."""
     name = args.config_name
     if not args.auto_config_name:
         return name
@@ -129,11 +130,15 @@ def resolve_config_name(args: argparse.Namespace) -> str:
         name = f"{name}_foldnorm"
     if args.num_workers < 0:
         raise ValueError("--num-workers must be non-negative")
-    if args.protocol == "fixed" and args.fixed_epochs != DEFAULT_FIXED_EPOCHS:
-        return f"{name}_fixedep{args.fixed_epochs}"
+    if args.protocol == "fixed":
+        if args.fixed_epochs != DEFAULT_FIXED_EPOCHS:
+            name = f"{name}_fixedep{args.fixed_epochs}"
+        if args.diagnostic_validate_outer:
+            name = f"{name}_diagouter"
+        return name
     default_selection_epochs = DATASETS[args.dataset].selection_epochs
     selected_max = selection_max_epochs(args)
-    if args.protocol == "nested" and selected_max != default_selection_epochs:
+    if selected_max != default_selection_epochs:
         return f"{name}_selectmaxep{selected_max}"
     return name
 
@@ -224,9 +229,14 @@ def build_stage_plan(
         feature_cache_dir=args.data_root / "feature_cache" / args.dataset,
         norm_mode=args.norm_mode,
         norm_stats_path=norm_stats_path,
+        diagnostic_outer_validation=args.diagnostic_validate_outer and stage == "fixed",
         wandb_project=args.wandb_project or None,
         wandb_run_name=args.wandb_run_name
-        or f"{args.dataset}-{args.protocol}-fold{args.fold:02d}-seed{args.seed}-{stage}-{args.pretrained.stem}",
+        or (
+            f"{args.dataset}-{args.protocol}-fold{args.fold:02d}-seed{args.seed}-{stage}"
+            f"-{args.pretrained.stem}"
+            + ("-diagouter" if args.diagnostic_validate_outer else "")
+        ),
         output_dir=stage_output_dir(args, stage),
         pretrained=args.pretrained,
         fairseq_root=args.fairseq_root,
@@ -234,11 +244,16 @@ def build_stage_plan(
     )
 
 
+def validation_enabled(plan: StagePlan) -> bool:
+    """Selection and diagnostic-fixed stages need Fairseq validation."""
+    return plan.stage == "selection" or plan.diagnostic_outer_validation
+
+
 def hydra_train_command(plan: StagePlan) -> list[str]:
-    validation_enabled = plan.stage == "selection"
+    enabled = validation_enabled(plan)
     # Fairseq 0.12.2 eagerly loads valid_subset even when validation is disabled.
     # Point it at train in formal stages so sealed outer-valid is not touched.
-    fairseq_valid_subset = plan.valid_subset if validation_enabled else plan.train_subset
+    fairseq_valid_subset = plan.valid_subset if enabled else plan.train_subset
     output = plan.output_dir
     command = [
         plan.python,
@@ -260,7 +275,7 @@ def hydra_train_command(plan: StagePlan) -> list[str]:
         f"model.target_length={plan.target_length}",
         f"dataset.train_subset={plan.train_subset}",
         f"dataset.valid_subset={fairseq_valid_subset}",
-        f"dataset.disable_validation={str(not validation_enabled).lower()}",
+        f"dataset.disable_validation={str(not enabled).lower()}",
         f"dataset.batch_size={BATCH_SIZE}",
         f"dataset.num_workers={plan.num_workers}",
         "dataset.validate_interval=1",
@@ -319,6 +334,8 @@ def eval_command(plan: StagePlan, checkpoint: Path, selected_epoch: int | None) 
         command.extend(["--norm-mean", "-4.268", "--norm-std", "4.569"])
     if plan.protocol == "fixed":
         command.extend(["--fixed-epochs", str(plan.epochs)])
+        if plan.diagnostic_outer_validation:
+            command.append("--diagnostic-outer-validation")
     else:
         if selected_epoch is None:
             raise ValueError("nested final evaluation requires selected_epoch")
@@ -340,28 +357,149 @@ def _json_records(lines: Iterable[str]) -> Iterable[tuple[str, dict]]:
             yield line[:start], record
 
 
-def validation_history(log_path: Path) -> list[dict[str, float | int]]:
+VALIDATION_METRIC_NAMES = ("loss", "accuracy", "war", "uar", "macro_f1")
+DIAGNOSTIC_HISTORY_SCHEMA = "eat2emo-ser-diagnostic-outer-validation-v1"
+
+
+def _finite_float(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _valid_metric(
+    record: dict,
+    metric: str,
+    *,
+    is_validation: bool,
+) -> float | None:
+    """Read ``valid_<metric>`` without trusting a single Fairseq log shape."""
+    for key, value in record.items():
+        lowered = str(key).lower()
+        if lowered == f"valid_{metric}" or lowered.endswith(f"_valid_{metric}"):
+            parsed = _finite_float(value)
+            if parsed is not None:
+                return parsed
+    return _finite_float(record.get(metric)) if is_validation else None
+
+
+def validation_metrics_history(log_path: Path) -> list[dict[str, float | int]]:
+    """Collect outer/inner validation metrics per epoch from a Fairseq JSON log."""
     if not log_path.is_file():
         return []
-    by_epoch: dict[int, float] = {}
+    by_epoch: dict[int, dict[str, float | int]] = {}
     for prefix, record in _json_records(
         log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     ):
-        score = next(
-            (value for key, value in record.items() if key.endswith("valid_uar")),
-            None,
+        lowered_keys = [str(key).lower() for key in record]
+        is_validation = (
+            "valid" in prefix.lower()
+            or "valid" in str(record.get("split", "")).lower()
+            or any("valid" in key for key in lowered_keys)
         )
-        is_validation = "valid" in prefix.lower() or "valid" in str(record.get("split", "")).lower()
-        if score is None and is_validation:
-            score = record.get("uar")
-        if score is None:
+        if not is_validation:
             continue
         try:
             epoch = int(float(record["epoch"]))
-            by_epoch[epoch] = float(score)
         except (KeyError, TypeError, ValueError):
             continue
-    return [{"epoch": epoch, "uar": by_epoch[epoch]} for epoch in sorted(by_epoch)]
+        row = by_epoch.setdefault(epoch, {"epoch": epoch})
+        for metric in VALIDATION_METRIC_NAMES:
+            parsed = _valid_metric(record, metric, is_validation=True)
+            if parsed is not None:
+                row[metric] = parsed
+    return [by_epoch[epoch] for epoch in sorted(by_epoch)]
+
+
+def validation_history(log_path: Path) -> list[dict[str, float | int]]:
+    return [
+        {"epoch": int(row["epoch"]), "uar": float(row["uar"])}
+        for row in validation_metrics_history(log_path)
+        if "uar" in row
+    ]
+
+
+def _best_history_row(
+    history: Sequence[dict[str, float | int]],
+    metric: str,
+    *,
+    maximize: bool,
+) -> dict[str, float | int] | None:
+    rows = [row for row in history if metric in row]
+    if not rows:
+        return None
+    best = min(
+        rows,
+        key=lambda row: (
+            -float(row[metric]) if maximize else float(row[metric]),
+            int(row["epoch"]),
+        ),
+    )
+    return {"epoch": int(best["epoch"]), "value": float(best[metric])}
+
+
+def write_diagnostic_history(
+    plan: StagePlan,
+    log_path: Path,
+    best_checkpoint: Path | None = None,
+) -> dict[str, object]:
+    """Persist every per-epoch outer-valid diagnostic metric and its best epoch."""
+    history = validation_metrics_history(log_path)
+    expected = list(range(1, plan.epochs + 1))
+    observed = [int(row["epoch"]) for row in history]
+    missing = [epoch for epoch in expected if epoch not in observed]
+    missing_metrics = [
+        metric
+        for metric in VALIDATION_METRIC_NAMES
+        if not any(metric in row for row in history)
+    ]
+    payload: dict[str, object] = {
+        "schema": DIAGNOSTIC_HISTORY_SCHEMA,
+        "diagnostic_outer_validation": True,
+        "used_for_model_selection": False,
+        "dataset": plan.dataset,
+        "protocol": plan.protocol,
+        "config_name": plan.config_name,
+        "fold": plan.fold,
+        "seed": plan.seed,
+        "stage": plan.stage,
+        "outer_valid_subset": "valid",
+        "epochs_requested": plan.epochs,
+        "epochs_observed": observed,
+        "complete": observed == expected and not missing_metrics,
+        "missing_epochs": missing,
+        "missing_metrics": missing_metrics,
+        "metric_scale": {
+            "loss": "cross_entropy_nats",
+            "accuracy": "percent_0_100",
+            "war": "percent_0_100",
+            "uar": "percent_0_100",
+            "macro_f1": "percent_0_100",
+        },
+        "warning": (
+            "Outer-valid was evaluated every epoch for diagnostics only. "
+            "Do not use this history for epoch selection or formal reporting."
+        ),
+        "source_log": str(log_path.resolve()),
+        "checkpoint_best_outer_diagnostic": (
+            str(best_checkpoint.resolve()) if best_checkpoint is not None else None
+        ),
+        "history": history,
+        "best_epochs": {
+            "loss": _best_history_row(history, "loss", maximize=False),
+            "accuracy": _best_history_row(history, "accuracy", maximize=True),
+            "war": _best_history_row(history, "war", maximize=True),
+            "uar": _best_history_row(history, "uar", maximize=True),
+            "macro_f1": _best_history_row(history, "macro_f1", maximize=True),
+        },
+        "last_epoch": history[-1] if history else None,
+    }
+    write_json(plan.output_dir / "diagnostic_history.json", payload)
+    return payload
 
 
 def select_best_epoch(output_dir: Path, max_epochs: int) -> tuple[int, list[dict[str, float | int]]]:
@@ -399,9 +537,28 @@ def write_run_manifest(plan: StagePlan, command: Sequence[str], selected_epoch: 
             "trained_epochs": plan.epochs,
             "fixed_epochs": plan.epochs if plan.protocol == "fixed" else None,
             "selected_epoch": selected_epoch,
-            "validation_disabled": plan.stage != "selection",
+            "diagnostic_outer_validation": plan.diagnostic_outer_validation,
+            "diagnostic_outer_valid_subset": (
+                plan.valid_subset if plan.diagnostic_outer_validation else None
+            ),
+            "diagnostic_history": (
+                "diagnostic_history.json" if plan.diagnostic_outer_validation else None
+            ),
+            "diagnostic_metrics": (
+                list(VALIDATION_METRIC_NAMES)
+                if plan.diagnostic_outer_validation
+                else None
+            ),
+            "used_for_model_selection": plan.stage == "selection",
+            "validation_disabled": not validation_enabled(plan),
             "fairseq_valid_subset": (
-                plan.valid_subset if plan.stage == "selection" else plan.train_subset
+                plan.valid_subset if validation_enabled(plan) else plan.train_subset
+            ),
+            "diagnostic_warning": (
+                "Outer-valid is evaluated every epoch for diagnostics only; "
+                "do not use it for epoch selection or formal reporting."
+                if plan.diagnostic_outer_validation
+                else None
             ),
             "command": list(command),
         }
@@ -427,6 +584,18 @@ def run_and_tee(command: Sequence[str], log_path: Path, env: dict | None = None)
         return_code = process.wait()
     if return_code:
         raise subprocess.CalledProcessError(return_code, list(command))
+
+
+def isolate_diagnostic_best_checkpoint(output_dir: Path) -> Path | None:
+    """Rename a validation-selected best checkpoint so it cannot be mistaken for formal."""
+    source = output_dir / "checkpoint_best.pt"
+    if not source.is_file():
+        return None
+    target = output_dir / "checkpoint_best_outer_diagnostic.pt"
+    if target.exists() or target.is_symlink():
+        raise FileExistsError(f"Refusing to overwrite {target}")
+    source.replace(target)
+    return target
 
 
 def promote_final_checkpoint(output_dir: Path) -> Path:
@@ -461,6 +630,11 @@ def validate_runtime(args: argparse.Namespace) -> None:
         raise ValueError("config-name may contain only letters, digits, '.', '_' and '-'")
     if args.protocol == "fixed" and args.stage != "all":
         raise ValueError("--stage applies only to --protocol nested")
+    if args.diagnostic_validate_outer and args.protocol != "fixed":
+        raise ValueError(
+            "--diagnostic-validate-outer requires --protocol fixed; "
+            "nested selection already evaluates inner-valid every epoch"
+        )
     if not args.dry_run:
         train_entry = args.fairseq_root / "fairseq_cli" / "hydra_train.py"
         if not train_entry.is_file():
@@ -522,8 +696,37 @@ def execute_stage(plan: StagePlan, selected_epoch: int | None, dry_run: bool) ->
         train_env["WANDB_RUN_GROUP"] = (
             f"{plan.dataset}-{plan.protocol}-{plan.config_name}"
         )
-        train_env["WANDB_JOB_TYPE"] = plan.stage
+        train_env["WANDB_JOB_TYPE"] = (
+            "fixed-diagnostic" if plan.diagnostic_outer_validation else plan.stage
+        )
+        if plan.diagnostic_outer_validation:
+            tags = [
+                tag.strip()
+                for tag in train_env.get("WANDB_TAGS", "").split(",")
+                if tag.strip()
+            ]
+            diagnostic_tag = "diagnostic-outer-valid"
+            if diagnostic_tag not in tags:
+                tags.append(diagnostic_tag)
+            train_env["WANDB_TAGS"] = ",".join(tags)
+            train_env["WANDB_NOTES"] = (
+                "Diagnostic only: outer-valid evaluated every epoch. "
+                "Never use these curves for epoch selection or formal reporting."
+            )
     run_and_tee(command, plan.output_dir / "train.log", env=train_env)
+    if plan.diagnostic_outer_validation:
+        best_checkpoint = isolate_diagnostic_best_checkpoint(plan.output_dir)
+        diagnostic = write_diagnostic_history(
+            plan, plan.output_dir / "train.log", best_checkpoint=best_checkpoint
+        )
+        if not diagnostic["complete"]:
+            print(
+                "Warning: diagnostic history is incomplete; missing epochs "
+                f"{diagnostic['missing_epochs']}, missing metrics "
+                f"{diagnostic['missing_metrics']}. See "
+                f"{plan.output_dir / 'diagnostic_history.json'}",
+                file=sys.stderr,
+            )
     if plan.stage == "selection":
         best_epoch, history = select_best_epoch(plan.output_dir, plan.epochs)
         score_by_epoch = {int(row["epoch"]): float(row["uar"]) for row in history}
@@ -561,6 +764,14 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=3949)
     parser.add_argument("--protocol", choices=("nested", "fixed"), default="nested")
     parser.add_argument("--stage", choices=("all", "select", "final"), default="all")
+    parser.add_argument(
+        "--diagnostic-validate-outer",
+        action="store_true",
+        help=(
+            "fixed protocol only: evaluate outer-valid every epoch for diagnostic "
+            "curves; never use the results for epoch selection"
+        ),
+    )
     parser.add_argument(
         "--norm-mode",
         choices=("audioset", "fold"),

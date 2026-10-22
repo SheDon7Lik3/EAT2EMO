@@ -133,12 +133,34 @@ ravdess-speech-fixed-fold00-seed3949-fixed-EAT-base_epoch30_ft_encoder
 
 ```text
 group:    <dataset>-<protocol>-<config>
-job_type: fixed / selection / final
+job_type: fixed / fixed-diagnostic / selection / final
 run name: 包含 fold、seed、stage 和 checkpoint 名
 ```
 
 例如 RAVDESS-Speech fixed 5 folds × 5 seeds 会产生 25 个 run，同一个 group 下；
 nested 的 selection 和 final 是同一个 group 下的两个 job_type。
+
+### 1.4 诊断：每 epoch 评估 outer-valid
+
+正式 fixed 协议会在训练期间封存 `outer-valid`。如果只想观察过拟合曲线，可显式打开诊断模式：
+
+```bash
+bash scripts/finetuning_SER.sh \
+  --dataset ravdess-speech --fold 0 --seed 3949 \
+  --protocol fixed --fixed-epochs 20 --norm-mode fold --num-workers 12 \
+  --diagnostic-validate-outer --wandb-project eat2emo-ser
+```
+
+该开关只允许 fixed 协议，行为是：
+
+- 每个 epoch 在 `valid`（outer-valid）上计算 loss / accuracy / WAR / UAR / macro-F1；
+- W&B 记录逐 epoch 曲线，run 名和 config 自动加 `-diagouter` / `_diagouter`；
+- 结果目录额外写入 `diagnostic_history.json`，包含每 epoch 全部指标、各指标最佳 epoch 和缺失 epoch；
+- 若 Fairseq 产生 `checkpoint_best.pt`，会改名为 `checkpoint_best_outer_diagnostic.pt`，避免被误当作正式选模结果；
+- 最终 `results/metrics.json` 会标记 `"diagnostic_outer_validation": true`；
+- 这类结果不会被 `summarize_ser.py` 当作正式结果汇总。
+
+> 诊断模式每轮都看 outer-valid，不能用于挑 epoch，也不能作为正式 test 指标。
 
 ## 2. 路径与环境
 

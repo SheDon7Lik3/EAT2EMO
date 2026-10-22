@@ -389,16 +389,28 @@ bash scripts/finetuning_SER.sh \
 
 `fixed` 只读 `train/valid`，固定训练 60 epoch，全程不验证，结束后只评估一次 `valid`。`--stage` 只适用于 nested，不要传给 fixed。
 
+诊断曲线（每 epoch 在 outer-valid 上算 loss / accuracy / WAR / UAR / macro-F1）：
+
+```bash
+bash scripts/finetuning_SER.sh \
+  --dataset emodb --fold 1 --seed 3949 --protocol fixed --fixed-epochs 20 \
+  --diagnostic-validate-outer --wandb-project eat2emo-ser
+```
+
+该模式只允许 fixed；config/run 名会自动加 `_diagouter` / `-diagouter`。结果目录额外写 `diagnostic_history.json`，最终 `metrics.json` 标记为 diagnostic，`summarize_ser.py` 会忽略。**不要用这些曲线挑 epoch。**
+
 ### 6.4 输出目录与文件
 
 ```text
 ${SER_OUTPUT_ROOT}/{dataset}/{protocol}/{config}/seed_N/fold_XX/{selection|final|fixed}/
-├── run_manifest.json          # 实际命令、样本数、调度、归一化、pretrained
-├── train.log                  # Fairseq JSON 日志
+├── run_manifest.json          # 实际命令、样本数、调度、归一化、pretrained、diagnostic 标记
+├── train.log                  # Fairseq JSON 日志（诊断模式含逐 epoch valid 指标）
 ├── checkpoint_last.pt
 ├── checkpoint_best.pt         # 仅 selection
+├── checkpoint_best_outer_diagnostic.pt  # 仅诊断 fixed，由 outer-valid 选出，禁止正式使用
 ├── checkpoint_final.pt        # final/fixed，checkpoint_last 的硬链接
 ├── selection_summary.json     # 仅 selection
+├── diagnostic_history.json    # 仅 --diagnostic-validate-outer
 ├── eval.log
 └── results/
     ├── metrics.json
@@ -410,6 +422,7 @@ ${SER_OUTPUT_ROOT}/{dataset}/{protocol}/{config}/seed_N/fold_XX/{selection|final
 默认 config 名是 `eat_base_sr16k_audiosetnorm_bs32`。非默认 epoch 会自动加后缀隔离：
 
 - fixed 非 60 epoch → `..._fixedepN`
+- fixed 诊断模式 → `..._diagouter`
 - nested 非默认 selection 上限 → `..._selectmaxepN`
 
 不要手工把 smoke 结果和正式 config 混在一起。
@@ -420,6 +433,8 @@ ${SER_OUTPUT_ROOT}/{dataset}/{protocol}/{config}/seed_N/fold_XX/{selection|final
 tail -n 50 -f "$SER_OUTPUT_ROOT/emodb/nested/eat_base_sr16k_audiosetnorm_bs32/seed_3949/fold_01/final/train.log"
 nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv
 ```
+
+诊断模式下，`train.log` 的 `valid_loss` / `valid_accuracy` / `valid_war` / `valid_uar` / `valid_macro_f1` 会逐 epoch 出现；完整汇总见同目录 `diagnostic_history.json`。W&B 中对应 run 的 job type 为 `fixed-diagnostic`，并带 `diagnostic-outer-valid` tag。
 
 协议固定 `BATCH_SIZE=32`、fp16、Adam `5e-5`、wd `0.05`、cosine + 10% warmup、`min_lr=1e-6`；不要通过 CLI 改 batch size，输出目录和 `run_manifest.json` 都按这个记录。
 
