@@ -28,16 +28,20 @@ class SerProtocolTest(unittest.TestCase):
         self.make_split(data_root, dataset, fold, "inner_valid", 4)
         return data_root / "manifests" / dataset / ser_protocol.fold_dir_name(fold)
 
-    def make_stats(self, data_root: Path, dataset: str, fold: int) -> Path:
-        directory = data_root / "norm_stats" / dataset / "selection"
+    def make_stats(self, data_root: Path, dataset: str, fold: int, stage: str = "selection") -> Path:
+        directory = data_root / "norm_stats" / dataset / stage
         directory.mkdir(parents=True, exist_ok=True)
-        manifest = data_root / "manifests" / dataset / ser_protocol.fold_dir_name(fold) / "inner_train.tsv"
+        split = "inner_train" if stage == "selection" else "train"
+        manifest = (
+            data_root / "manifests" / dataset
+            / ser_protocol.fold_dir_name(fold) / f"{split}.tsv"
+        )
         stats = {
             "stats_schema": "eat2emo-ser-fbank-v1",
             "dataset": dataset,
             "fold": fold,
-            "stage": "selection",
-            "split": "inner_train",
+            "stage": stage,
+            "split": split,
             "target_length": ser_protocol.DATASETS[dataset].target_length,
             "mel_bins": 128,
             "sample_rate": 16000,
@@ -117,6 +121,63 @@ class SerProtocolTest(unittest.TestCase):
                 stdout,
             )
             self.assertFalse(output_root.exists())
+
+    def test_fixed_dry_run_uses_full_train_and_final_checkpoint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data_root = root / "data"
+            output_root = root / "runs"
+            self.make_split(data_root, "emodb", 1, "train", 40)
+            self.make_split(data_root, "emodb", 1, "valid", 7)
+            self.make_stats(data_root, "emodb", 1, stage="fixed")
+            code, stdout, stderr = self.run_main(
+                [
+                    "--dataset", "emodb", "--fold", "1",
+                    "--protocol", "fixed", "--fixed-epochs", "60",
+                    "--norm-mode", "fold",
+                    "--data-root", str(data_root), "--output-root", str(output_root),
+                    "--dry-run",
+                ]
+            )
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertIn('"protocol": "fixed"', stdout)
+            self.assertIn('"fixed_epochs": 60', stdout)
+            self.assertIn('"max_epochs": null', stdout)
+            self.assertIn('"train_subset": "train"', stdout)
+            self.assertIn('"valid_subset": "valid"', stdout)
+            self.assertIn("dataset.disable_validation=true", stdout)
+            self.assertIn("dataset.valid_subset=train", stdout)
+            self.assertIn("optimization.max_epoch=60", stdout)
+            self.assertIn("checkpoint_final.pt", stdout)
+            self.assertIn("--fixed-epochs 60", stdout)
+            self.assertNotIn("--selected-epoch", stdout)
+            self.assertIn("norm_stats/emodb/fixed/fold_01.json", stdout)
+            self.assertIn(
+                f'"output_dir": "{output_root.resolve()}/emodb/fixed/{ser_protocol.DEFAULT_CONFIG_NAME}_foldnorm/seed_3949/fold_01"',
+                stdout,
+            )
+            self.assertFalse(output_root.exists())
+
+    def test_fixed_nondefault_epochs_get_an_isolated_config(self):
+        parser = ser_protocol.make_parser()
+        args = parser.parse_args(
+            ["--dataset", "emodb", "--fold", "1", "--protocol", "fixed",
+             "--fixed-epochs", "2"]
+        )
+        self.assertEqual(
+            ser_protocol.resolve_config_name(args),
+            f"{ser_protocol.DEFAULT_CONFIG_NAME}_fixedep2",
+        )
+
+    def test_fixed_rejects_max_epochs(self):
+        code, _, stderr = self.run_main(
+            [
+                "--dataset", "emodb", "--fold", "1", "--protocol", "fixed",
+                "--max-epochs", "1", "--dry-run",
+            ]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("--max-epochs applies only", stderr)
 
     def test_nondefault_max_epochs_get_an_isolated_config(self):
         parser = ser_protocol.make_parser()
@@ -334,6 +395,71 @@ class SerProtocolTest(unittest.TestCase):
             self.assertEqual(len(summary["history"]), 2)
             self.assertEqual(manifest["status"], "evaluated")
             self.assertEqual(manifest["best_epoch"], 2)
+
+    def test_execute_fixed_trains_then_evaluates_final_checkpoint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data_root = root / "data"
+            output_root = root / "runs"
+            fairseq_root = root / "fairseq"
+            pretrained = root / "eat_pretrained.pt"
+            (fairseq_root / "fairseq_cli").mkdir(parents=True)
+            (fairseq_root / "fairseq_cli" / "hydra_train.py").touch()
+            pretrained.write_bytes(b"pretrained")
+            self.make_split(data_root, "emodb", 1, "train", 40)
+            self.make_split(data_root, "emodb", 1, "valid", 7)
+            self.make_stats(data_root, "emodb", 1, stage="fixed")
+
+            commands = []
+
+            def fake_run(command, log_path, **kwargs):
+                commands.append(list(command))
+                if str(command[1]).endswith("hydra_train.py"):
+                    overrides = {
+                        token.split("=", 1)[0]: token.split("=", 1)[1]
+                        for token in command
+                        if "=" in token and not token.startswith("--")
+                    }
+                    save_dir = Path(overrides["checkpoint.save_dir"])
+                    (save_dir / "checkpoint_last.pt").write_bytes(b"last")
+                else:
+                    log_path.write_text("eval complete\n", encoding="utf-8")
+
+            with mock.patch.object(ser_protocol, "run_and_tee", side_effect=fake_run):
+                code, _, stderr = self.run_main(
+                    [
+                        "--dataset", "emodb", "--fold", "1", "--seed", "1",
+                        "--protocol", "fixed", "--fixed-epochs", "2",
+                        "--norm-mode", "fold",
+                        "--data-root", str(data_root), "--output-root", str(output_root),
+                        "--fairseq-root", str(fairseq_root), "--pretrained", str(pretrained),
+                    ]
+                )
+
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertEqual(len(commands), 2)
+            train_command, eval_command = commands
+            self.assertIn("dataset.train_subset=train", train_command)
+            self.assertIn("dataset.valid_subset=train", train_command)
+            self.assertIn("dataset.disable_validation=true", train_command)
+            self.assertIn("optimization.max_epoch=2", train_command)
+            self.assertIn("checkpoint_final.pt", " ".join(eval_command))
+            self.assertIn("--fixed-epochs", eval_command)
+            self.assertIn("2", eval_command)
+            self.assertNotIn("--selected-epoch", eval_command)
+
+            run_dir = (
+                output_root / "emodb" / "fixed"
+                / f"{ser_protocol.DEFAULT_CONFIG_NAME}_foldnorm_fixedep2"
+                / "seed_1" / "fold_01"
+            )
+            self.assertEqual((run_dir / "checkpoint_final.pt").read_bytes(), b"last")
+            manifest = json.loads(
+                (run_dir / "run_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["status"], "evaluated")
+            self.assertIsNone(manifest["best_epoch"])
+            self.assertFalse((run_dir / "earlystop_summary.json").exists())
 
 
 if __name__ == "__main__":

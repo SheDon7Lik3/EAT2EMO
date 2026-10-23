@@ -500,10 +500,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dataset", type=canonical_dataset, required=True)
+    parser.add_argument("--protocol", choices=("earlystop", "fixed"), required=True)
     parser.add_argument("--fold", type=parse_fold, required=True)
     parser.add_argument("--seed", type=int, required=True)
-    parser.add_argument("--selected-epoch", type=int, required=True)
-    parser.add_argument("--max-epochs", type=int, required=True)
+    parser.add_argument("--selected-epoch", type=int)
+    parser.add_argument("--max-epochs", type=int)
+    parser.add_argument("--fixed-epochs", type=int)
     parser.add_argument("--config", default="eat_base_sr16k_audiosetnorm_bs32")
     parser.add_argument("--split", default="valid")
     parser.add_argument("--audio-root", type=Path)
@@ -529,12 +531,22 @@ def main() -> None:
         parser.error(
             f"--fold for {args.dataset} must be {allowed[0]}..{allowed[-1]}"
         )
-    if args.selected_epoch <= 0:
-        parser.error("--selected-epoch must be positive")
-    if args.max_epochs <= 0:
-        parser.error("--max-epochs must be positive")
-    if args.selected_epoch > args.max_epochs:
-        parser.error("--selected-epoch must not exceed --max-epochs")
+    if args.protocol == "earlystop":
+        if args.selected_epoch is None or args.max_epochs is None:
+            parser.error("earlystop evaluation requires --selected-epoch and --max-epochs")
+        if args.fixed_epochs is not None:
+            parser.error("earlystop evaluation must not set --fixed-epochs")
+        if args.selected_epoch <= 0 or args.max_epochs <= 0:
+            parser.error("--selected-epoch and --max-epochs must be positive")
+        if args.selected_epoch > args.max_epochs:
+            parser.error("--selected-epoch must not exceed --max-epochs")
+    else:
+        if args.fixed_epochs is None:
+            parser.error("fixed evaluation requires --fixed-epochs")
+        if args.selected_epoch is not None or args.max_epochs is not None:
+            parser.error("fixed evaluation must not set --selected-epoch/--max-epochs")
+        if args.fixed_epochs <= 0:
+            parser.error("--fixed-epochs must be positive")
     if args.target_length is None:
         args.target_length = DEFAULT_TARGET_LENGTHS[args.dataset]
     if args.target_length <= 0:
@@ -599,14 +611,17 @@ def main() -> None:
     probabilities, targets, loss = run_inference(args, manifest)
     metadata = {
         "dataset": args.dataset,
-        "protocol": "earlystop",
+        "protocol": args.protocol,
         "config": args.config,
         "fold": args.fold,
         "seed": args.seed,
         "split": args.split,
         "selected_epoch": args.selected_epoch,
         "max_epochs": args.max_epochs,
-        "trained_epochs": args.selected_epoch,
+        "fixed_epochs": args.fixed_epochs,
+        "trained_epochs": (
+            args.selected_epoch if args.protocol == "earlystop" else args.fixed_epochs
+        ),
         "target_length": args.target_length,
         "norm_mode": args.norm_mode,
         "norm_mean": args.norm_mean,
@@ -614,8 +629,12 @@ def main() -> None:
         "norm_stats_path": str(args.norm_stats_path) if args.norm_stats_path else None,
         "norm_stats_sha256": args.norm_stats_sha256,
         "checkpoint": str(args.checkpoint.resolve()),
-        "evaluation_role": "earlystop_best_inner_valid",
-        "used_for_model_selection": True,
+        "evaluation_role": (
+            "earlystop_best_inner_valid"
+            if args.protocol == "earlystop"
+            else "fixed_last_checkpoint"
+        ),
+        "used_for_model_selection": args.protocol == "earlystop",
     }
     result = save_evaluation_artifacts(
         args.output,

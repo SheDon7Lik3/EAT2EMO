@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one EAT SER fold with the outer-split early-stop protocol."""
+"""Run one EAT SER fold with the earlystop or fixed protocol."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import math
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -18,14 +19,18 @@ from typing import Iterable, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BATCH_SIZE = 32
-PROTOCOL = "earlystop"
-STATS_STAGE = "selection"
 DEFAULT_CONFIG_NAME = "eat_base_sr16k_audiosetnorm_bs32"
 DEFAULT_PRETRAINED = Path(
     "/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_pt.pt"
 )
+DEFAULT_FIXED_EPOCHS = 60
+PROTOCOLS = ("earlystop", "fixed")
 VALIDATION_METRIC_NAMES = ("loss", "accuracy", "war", "uar", "macro_f1")
 EARLYSTOP_SUMMARY_SCHEMA = "eat2emo-ser-earlystop-v1"
+STATS_STAGE = {
+    "earlystop": "selection",
+    "fixed": "fixed",
+}
 
 
 @dataclass(frozen=True)
@@ -54,7 +59,8 @@ class RunPlan:
     seed: int
     train_subset: str
     valid_subset: str
-    max_epochs: int
+    max_epochs: int | None
+    fixed_epochs: int | None
     train_samples: int
     updates_per_epoch: int
     max_updates: int
@@ -121,8 +127,12 @@ def requested_max_epochs(args: argparse.Namespace) -> int:
     return args.max_epochs or DATASETS[args.dataset].max_epochs
 
 
+def requested_fixed_epochs(args: argparse.Namespace) -> int:
+    return args.fixed_epochs or DEFAULT_FIXED_EPOCHS
+
+
 def resolve_config_name(args: argparse.Namespace) -> str:
-    """Keep smoke/non-default scan caps isolated without duplicating protocol text."""
+    """Keep smoke/non-default runs isolated without ambiguous protocol text."""
     name = args.config_name
     if not args.auto_config_name:
         return name
@@ -130,8 +140,14 @@ def resolve_config_name(args: argparse.Namespace) -> str:
         name = f"{name}_foldnorm"
     if args.num_workers < 0:
         raise ValueError("--num-workers must be non-negative")
-    if args.max_epochs is not None and args.max_epochs != DATASETS[args.dataset].max_epochs:
-        name = f"{name}_maxep{args.max_epochs}"
+    if args.protocol == "fixed":
+        fixed_epochs = requested_fixed_epochs(args)
+        if fixed_epochs != DEFAULT_FIXED_EPOCHS:
+            name = f"{name}_fixedep{fixed_epochs}"
+    else:
+        max_epochs = requested_max_epochs(args)
+        if max_epochs != DATASETS[args.dataset].max_epochs:
+            name = f"{name}_maxep{max_epochs}"
     return name
 
 
@@ -139,7 +155,7 @@ def run_output_dir(args: argparse.Namespace) -> Path:
     return (
         args.output_root
         / args.dataset
-        / PROTOCOL
+        / args.protocol
         / args.config_name
         / f"seed_{args.seed}"
         / fold_dir_name(args.fold)
@@ -158,7 +174,7 @@ def norm_stats_path_for(args: argparse.Namespace) -> Path:
         args.data_root
         / "norm_stats"
         / args.dataset
-        / STATS_STAGE
+        / STATS_STAGE[args.protocol]
         / f"{fold_dir_name(args.fold)}.json"
     )
 
@@ -173,15 +189,25 @@ def validate_norm_stats_available(args: argparse.Namespace) -> None:
 
 def build_run_plan(args: argparse.Namespace) -> RunPlan:
     spec = DATASETS[args.dataset]
-    train_subset = "inner_train"
-    valid_subset = "inner_valid"
+    if args.protocol == "earlystop":
+        train_subset = "inner_train"
+        valid_subset = "inner_valid"
+        max_epochs: int | None = requested_max_epochs(args)
+        fixed_epochs: int | None = None
+        epochs = max_epochs
+    else:
+        train_subset = "train"
+        valid_subset = "valid"
+        max_epochs = None
+        fixed_epochs = requested_fixed_epochs(args)
+        epochs = fixed_epochs
+
     data_dir = args.data_root / "manifests" / args.dataset / fold_dir_name(args.fold)
     require_split(data_dir, train_subset)
     require_split(data_dir, valid_subset)
     train_samples = count_manifest_samples(data_dir / f"{train_subset}.tsv")
-    max_epochs = requested_max_epochs(args)
     updates_per_epoch, max_updates, warmup_updates = compute_schedule(
-        train_samples, max_epochs
+        train_samples, epochs
     )
     norm_stats_path = None
     if args.norm_mode == "fold":
@@ -190,13 +216,14 @@ def build_run_plan(args: argparse.Namespace) -> RunPlan:
             raise FileNotFoundError(f"Missing norm stats: {norm_stats_path}")
     return RunPlan(
         dataset=args.dataset,
-        protocol=PROTOCOL,
+        protocol=args.protocol,
         config_name=args.config_name,
         fold=args.fold,
         seed=args.seed,
         train_subset=train_subset,
         valid_subset=valid_subset,
         max_epochs=max_epochs,
+        fixed_epochs=fixed_epochs,
         train_samples=train_samples,
         updates_per_epoch=updates_per_epoch,
         max_updates=max_updates,
@@ -211,7 +238,7 @@ def build_run_plan(args: argparse.Namespace) -> RunPlan:
         wandb_project=args.wandb_project or None,
         wandb_run_name=args.wandb_run_name
         or (
-            f"{args.dataset}-earlystop-fold{args.fold:02d}-seed{args.seed}"
+            f"{args.dataset}-{args.protocol}-fold{args.fold:02d}-seed{args.seed}"
             f"-{args.pretrained.stem}"
         ),
         output_dir=run_output_dir(args),
@@ -223,6 +250,15 @@ def build_run_plan(args: argparse.Namespace) -> RunPlan:
 
 def hydra_train_command(plan: RunPlan) -> list[str]:
     output = plan.output_dir
+    if plan.protocol == "earlystop":
+        fairseq_valid_subset = plan.valid_subset
+        disable_validation = "false"
+    else:
+        # Fixed training does not select a checkpoint; avoid loading outer-valid.
+        fairseq_valid_subset = plan.train_subset
+        disable_validation = "true"
+    epochs = plan.max_epochs if plan.protocol == "earlystop" else plan.fixed_epochs
+    assert epochs is not None
     command = [
         plan.python,
         str(plan.fairseq_root / "fairseq_cli" / "hydra_train.py"),
@@ -242,12 +278,12 @@ def hydra_train_command(plan: RunPlan) -> list[str]:
         f"model.num_classes={plan.num_classes}",
         f"model.target_length={plan.target_length}",
         f"dataset.train_subset={plan.train_subset}",
-        f"dataset.valid_subset={plan.valid_subset}",
-        "dataset.disable_validation=false",
+        f"dataset.valid_subset={fairseq_valid_subset}",
+        f"dataset.disable_validation={disable_validation}",
         f"dataset.batch_size={BATCH_SIZE}",
         f"dataset.num_workers={plan.num_workers}",
         "dataset.validate_interval=1",
-        f"optimization.max_epoch={plan.max_epochs}",
+        f"optimization.max_epoch={epochs}",
         f"optimization.max_update={plan.max_updates}",
         f"optimizer.groups.default.lr_scheduler.warmup_updates={plan.warmup_updates}",
         f"checkpoint.save_dir={output}",
@@ -265,7 +301,7 @@ def hydra_train_command(plan: RunPlan) -> list[str]:
     return command
 
 
-def eval_command(plan: RunPlan, checkpoint: Path, selected_epoch: int | str) -> list[str]:
+def eval_command(plan: RunPlan, checkpoint: Path, selected_epoch: int | str | None) -> list[str]:
     command = [
         plan.python,
         str(PROJECT_ROOT / "evaluation" / "eval_ser.py"),
@@ -279,16 +315,14 @@ def eval_command(plan: RunPlan, checkpoint: Path, selected_epoch: int | str) -> 
         str(plan.output_dir / "results"),
         "--dataset",
         plan.dataset,
+        "--protocol",
+        plan.protocol,
         "--config",
         plan.config_name,
         "--fold",
         str(plan.fold),
         "--seed",
         str(plan.seed),
-        "--selected-epoch",
-        str(selected_epoch),
-        "--max-epochs",
-        str(plan.max_epochs),
         "--split",
         "valid",
         "--target-length",
@@ -296,6 +330,21 @@ def eval_command(plan: RunPlan, checkpoint: Path, selected_epoch: int | str) -> 
         "--norm-mode",
         plan.norm_mode,
     ]
+    if plan.protocol == "earlystop":
+        if selected_epoch is None or plan.max_epochs is None:
+            raise ValueError("earlystop evaluation requires selected_epoch and max_epochs")
+        command.extend(
+            [
+                "--selected-epoch",
+                str(selected_epoch),
+                "--max-epochs",
+                str(plan.max_epochs),
+            ]
+        )
+    else:
+        if plan.fixed_epochs is None:
+            raise ValueError("fixed evaluation requires fixed_epochs")
+        command.extend(["--fixed-epochs", str(plan.fixed_epochs)])
     if plan.norm_mode == "fold":
         command.extend(["--norm-stats-path", str(plan.norm_stats_path)])
     else:
@@ -471,6 +520,20 @@ def run_and_tee(command: Sequence[str], log_path: Path, env: dict | None = None)
         raise subprocess.CalledProcessError(return_code, list(command))
 
 
+def promote_final_checkpoint(output_dir: Path) -> Path:
+    source = output_dir / "checkpoint_last.pt"
+    target = output_dir / "checkpoint_final.pt"
+    if not source.is_file():
+        raise RuntimeError(f"Training did not produce {source}")
+    if target.exists() or target.is_symlink():
+        raise FileExistsError(f"Refusing to overwrite {target}")
+    try:
+        target.hardlink_to(source)
+    except OSError:
+        shutil.copy2(source, target)
+    return target
+
+
 def ensure_fresh_output(paths: Iterable[Path]) -> None:
     for path in paths:
         if path.exists() or path.is_symlink():
@@ -487,6 +550,8 @@ def validate_runtime(args: argparse.Namespace) -> None:
         raise ValueError("seed must be non-negative")
     if not re.fullmatch(r"[A-Za-z0-9._-]+", args.config_name):
         raise ValueError("config-name may contain only letters, digits, '.', '_' and '-'")
+    if args.protocol == "fixed" and args.max_epochs is not None:
+        raise ValueError("--max-epochs applies only to --protocol earlystop")
     if not args.dry_run:
         train_entry = args.fairseq_root / "fairseq_cli" / "hydra_train.py"
         if not train_entry.is_file():
@@ -500,12 +565,12 @@ def print_dry_run(plan: RunPlan, command: Sequence[str]) -> None:
     payload = {key: str(value) if isinstance(value, Path) else value for key, value in payload.items()}
     print(json.dumps(payload, indent=2, sort_keys=True))
     print("TRAIN:", shlex.join(command))
-    print(
-        "EVAL:",
-        shlex.join(
-            eval_command(plan, plan.output_dir / "checkpoint_best.pt", "<best_epoch>")
-        ),
-    )
+    if plan.protocol == "earlystop":
+        checkpoint = plan.output_dir / "checkpoint_best.pt"
+        print("EVAL:", shlex.join(eval_command(plan, checkpoint, "<best_epoch>")))
+    else:
+        checkpoint = plan.output_dir / "checkpoint_final.pt"
+        print("EVAL:", shlex.join(eval_command(plan, checkpoint, None)))
 
 
 def execute_run(plan: RunPlan, dry_run: bool) -> None:
@@ -519,18 +584,30 @@ def execute_run(plan: RunPlan, dry_run: bool) -> None:
     train_env = os.environ.copy()
     if plan.wandb_project:
         train_env["WANDB_NAME"] = plan.wandb_run_name
-        train_env["WANDB_RUN_GROUP"] = f"{plan.dataset}-earlystop-{plan.config_name}"
-        train_env["WANDB_JOB_TYPE"] = "earlystop"
+        train_env["WANDB_RUN_GROUP"] = (
+            f"{plan.dataset}-{plan.protocol}-{plan.config_name}"
+        )
+        train_env["WANDB_JOB_TYPE"] = plan.protocol
     run_and_tee(command, plan.output_dir / "train.log", env=train_env)
-    best_epoch, history, best_row = select_best_epoch(plan.output_dir, plan.max_epochs)
-    write_earlystop_summary(plan, history, best_epoch, best_row)
-    write_run_manifest(plan, command, best_epoch=best_epoch, status="trained")
-    print(f"Selected epoch {best_epoch} by inner-valid UAR")
-    evaluation = eval_command(
-        plan, plan.output_dir / "checkpoint_best.pt", best_epoch
-    )
+
+    if plan.protocol == "earlystop":
+        assert plan.max_epochs is not None
+        best_epoch, history, best_row = select_best_epoch(
+            plan.output_dir, plan.max_epochs
+        )
+        write_earlystop_summary(plan, history, best_epoch, best_row)
+        write_run_manifest(plan, command, best_epoch=best_epoch, status="trained")
+        print(f"Selected epoch {best_epoch} by inner-valid UAR")
+        checkpoint = plan.output_dir / "checkpoint_best.pt"
+        selected_epoch: int | None = best_epoch
+    else:
+        checkpoint = promote_final_checkpoint(plan.output_dir)
+        write_run_manifest(plan, command, best_epoch=None, status="trained")
+        selected_epoch = None
+
+    evaluation = eval_command(plan, checkpoint, selected_epoch)
     run_and_tee(evaluation, plan.output_dir / "eval.log")
-    write_run_manifest(plan, command, best_epoch=best_epoch, status="evaluated")
+    write_run_manifest(plan, command, best_epoch=selected_epoch, status="evaluated")
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -539,17 +616,24 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", choices=sorted(DATASETS), required=True)
     parser.add_argument("--fold", type=int, required=True)
     parser.add_argument("--seed", type=int, default=3949)
+    parser.add_argument("--protocol", choices=PROTOCOLS, default="earlystop")
     parser.add_argument(
         "--max-epochs",
         type=positive_int,
         default=None,
-        help="inner-valid scan cap (default: dataset-specific)",
+        help="earlystop inner-valid scan cap (default: dataset-specific)",
+    )
+    parser.add_argument(
+        "--fixed-epochs",
+        type=positive_int,
+        default=None,
+        help=f"fixed protocol training epochs (default: {DEFAULT_FIXED_EPOCHS})",
     )
     parser.add_argument(
         "--norm-mode",
         choices=("audioset", "fold"),
         default="audioset",
-        help="audioset uses EAT fixed stats; fold uses per-fold inner-train stats",
+        help="audioset uses EAT fixed stats; fold uses per-fold train stats",
     )
     parser.add_argument(
         "--num-workers",

@@ -36,7 +36,7 @@ except ModuleNotFoundError:  # Support ``python evaluation/summarize_ser.py``.
 
 
 METRIC_NAMES = ("accuracy", "war", "uar", "macro_f1", "loss")
-PROTOCOL = "earlystop"
+PROTOCOLS = ("earlystop", "fixed")
 DEFAULT_FOLDS = {
     "emodb": tuple(range(1, 11)),
     "iemocap": tuple(range(1, 6)),
@@ -100,25 +100,32 @@ def _load_fold_result(metrics_path: Path) -> FoldResult:
         if not isinstance(payload.get(name), str) or not str(payload[name]).strip():
             raise ValueError(f"missing or invalid {name}: {metrics_path}")
     dataset = canonical_dataset(str(payload["dataset"]))
-    if payload["protocol"] != PROTOCOL:
-        raise ValueError(f"invalid protocol {payload['protocol']!r}: {metrics_path}")
+    protocol = str(payload["protocol"])
+    if protocol not in PROTOCOLS:
+        raise ValueError(f"invalid protocol {protocol!r}: {metrics_path}")
     if payload["split"] != "valid":
         raise ValueError(f"formal evaluation must use split 'valid': {metrics_path}")
     fold = _require_int(payload, "fold")
     seed = _require_int(payload, "seed")
     if fold < 0 or seed < 0:
         raise ValueError(f"fold and seed must be non-negative: {metrics_path}")
-    selected_epoch = _require_int(payload, "selected_epoch")
-    max_epochs = _require_int(payload, "max_epochs")
-    trained_epochs = _require_int(payload, "trained_epochs")
-    if selected_epoch <= 0 or max_epochs <= 0:
-        raise ValueError(f"selected_epoch and max_epochs must be positive: {metrics_path}")
-    if selected_epoch > max_epochs:
-        raise ValueError(f"selected_epoch exceeds max_epochs: {metrics_path}")
-    if trained_epochs != selected_epoch:
-        raise ValueError(
-            f"trained_epochs must equal selected_epoch: {metrics_path}"
-        )
+    if protocol == "earlystop":
+        selected_epoch = _require_int(payload, "selected_epoch")
+        max_epochs = _require_int(payload, "max_epochs")
+        trained_epochs = _require_int(payload, "trained_epochs")
+        if selected_epoch <= 0 or max_epochs <= 0:
+            raise ValueError(f"selected_epoch and max_epochs must be positive: {metrics_path}")
+        if selected_epoch > max_epochs:
+            raise ValueError(f"selected_epoch exceeds max_epochs: {metrics_path}")
+        if trained_epochs != selected_epoch:
+            raise ValueError(f"trained_epochs must equal selected_epoch: {metrics_path}")
+    else:
+        fixed_epochs = _require_int(payload, "fixed_epochs")
+        trained_epochs = _require_int(payload, "trained_epochs")
+        if fixed_epochs <= 0:
+            raise ValueError(f"fixed_epochs must be positive: {metrics_path}")
+        if trained_epochs != fixed_epochs:
+            raise ValueError(f"trained_epochs must equal fixed_epochs: {metrics_path}")
 
     for metric in METRIC_NAMES:
         value = payload.get(metric)
@@ -230,11 +237,14 @@ def _load_fold_result(metrics_path: Path) -> FoldResult:
 def discover_fold_results(
     root: Path,
     dataset: str,
+    protocol: str,
     *,
     config: str | None = None,
 ) -> list[FoldResult]:
-    """Find earlystop results for one dataset/config namespace."""
+    """Find results for one dataset/protocol/config namespace."""
 
+    if protocol not in PROTOCOLS:
+        raise ValueError(f"invalid protocol {protocol!r}")
     selected_paths: list[Path] = []
     for metrics_path in sorted(root.rglob("metrics.json")):
         try:
@@ -247,7 +257,7 @@ def discover_fold_results(
             payload_dataset = canonical_dataset(str(payload["dataset"]))
         except argparse.ArgumentTypeError as error:
             raise ValueError(f"invalid dataset metadata: {metrics_path}") from error
-        if payload_dataset != dataset or payload.get("protocol") != PROTOCOL:
+        if payload_dataset != dataset or payload.get("protocol") != protocol:
             continue
         if config is not None and payload.get("config") != config:
             continue
@@ -255,7 +265,7 @@ def discover_fold_results(
     if not selected_paths:
         suffix = f" and config {config!r}" if config else ""
         raise ValueError(
-            f"no {PROTOCOL} {dataset} metrics found under {root}{suffix}"
+            f"no {protocol} {dataset} metrics found under {root}{suffix}"
         )
     results = [_load_fold_result(path) for path in selected_paths]
     configs = {str(result.payload["config"]) for result in results}
@@ -271,9 +281,11 @@ def _validate_run_grid(
     results: Sequence[FoldResult],
     *,
     dataset: str,
+    protocol: str,
     expected_folds: Sequence[int],
     expected_seeds: Sequence[int],
     expected_samples: int,
+    fixed_epochs: int | None,
 ) -> dict[tuple[int, int], FoldResult]:
     expected_fold_set = set(expected_folds)
     expected_seed_set = set(expected_seeds)
@@ -286,7 +298,7 @@ def _validate_run_grid(
         payload = result.payload
         if canonical_dataset(str(payload["dataset"])) != dataset:
             raise ValueError(f"dataset mismatch: {result.metrics_path}")
-        if payload["protocol"] != PROTOCOL:
+        if payload["protocol"] != protocol:
             raise ValueError(f"protocol mismatch: {result.metrics_path}")
         if result.fold not in expected_fold_set:
             raise ValueError(f"unexpected fold {result.fold}: {result.metrics_path}")
@@ -317,9 +329,19 @@ def _validate_run_grid(
     norm_modes = {str(result.payload.get("norm_mode", "audioset")) for result in results}
     if len(norm_modes) != 1:
         raise ValueError("results from different norm modes cannot be aggregated")
-    max_epochs = {int(result.payload["max_epochs"]) for result in results}
-    if len(max_epochs) != 1:
-        raise ValueError("results with different max_epochs cannot be aggregated")
+    if protocol == "earlystop":
+        max_epochs = {int(result.payload["max_epochs"]) for result in results}
+        if len(max_epochs) != 1:
+            raise ValueError("results with different max_epochs cannot be aggregated")
+    else:
+        epochs = {int(result.payload["fixed_epochs"]) for result in results}
+        if len(epochs) != 1:
+            raise ValueError("fixed results with different fixed_epochs cannot be mixed")
+        actual_epochs = next(iter(epochs))
+        if fixed_epochs is not None and actual_epochs != fixed_epochs:
+            raise ValueError(
+                f"expected fixed_epochs={fixed_epochs}, found {actual_epochs}"
+            )
 
     baseline_labels = results[0].label_names
     for result in results:
@@ -384,32 +406,37 @@ def aggregate_results(
     results: Sequence[FoldResult],
     *,
     dataset: str,
+    protocol: str,
     expected_folds: Sequence[int],
     expected_seeds: Sequence[int],
     expected_samples: int,
+    fixed_epochs: int | None = None,
 ) -> dict[str, object]:
     grid = _validate_run_grid(
         results,
         dataset=dataset,
+        protocol=protocol,
         expected_folds=expected_folds,
         expected_seeds=expected_seeds,
         expected_samples=expected_samples,
+        fixed_epochs=fixed_epochs,
     )
     sorted_results = [
         grid[(seed, fold)] for seed in expected_seeds for fold in expected_folds
     ]
-    run_rows = [
-        {
+    run_rows = []
+    for result in sorted_results:
+        row = {
             "seed": result.seed,
             "fold": result.fold,
-            "selected_epoch": int(result.payload["selected_epoch"]),
-            "max_epochs": int(result.payload["max_epochs"]),
+            "selected_epoch": result.payload.get("selected_epoch"),
+            "max_epochs": result.payload.get("max_epochs"),
+            "fixed_epochs": result.payload.get("fixed_epochs"),
             **{metric: float(result.payload[metric]) for metric in METRIC_NAMES},
             "samples": int(result.payload["samples"]),
             "metrics_path": str(result.metrics_path),
         }
-        for result in sorted_results
-    ]
+        run_rows.append(row)
     fold_statistics = {
         "per_fold_across_seeds": {
             str(fold): {
@@ -458,13 +485,23 @@ def aggregate_results(
         metric: mean_std(float(per_seed[str(seed)][metric]) for seed in expected_seeds)
         for metric in METRIC_NAMES
     }
-    max_epochs_value = int(sorted_results[0].payload["max_epochs"])
+    max_epochs_value = (
+        int(sorted_results[0].payload["max_epochs"])
+        if protocol == "earlystop"
+        else None
+    )
+    fixed_epochs_value = (
+        int(sorted_results[0].payload["fixed_epochs"])
+        if protocol == "fixed"
+        else None
+    )
     return {
         "dataset": dataset,
-        "protocol": PROTOCOL,
+        "protocol": protocol,
         "config": str(sorted_results[0].payload["config"]),
         "norm_mode": str(sorted_results[0].payload.get("norm_mode", "audioset")),
         "max_epochs": max_epochs_value,
+        "fixed_epochs": fixed_epochs_value,
         "expected_folds": list(expected_folds),
         "expected_seeds": list(expected_seeds),
         "expected_samples_per_seed": expected_samples,
@@ -496,6 +533,7 @@ def write_summary(summary: dict[str, object], output: Path) -> tuple[Path, Path]
                 "fold",
                 "selected_epoch",
                 "max_epochs",
+                "fixed_epochs",
                 *METRIC_NAMES,
                 "samples",
                 "metrics_path",
@@ -524,13 +562,19 @@ def main() -> None:
     )
     parser.add_argument("root", type=Path, help="experiment directory to scan recursively")
     parser.add_argument("--dataset", type=canonical_dataset, required=True)
+    parser.add_argument("--protocol", choices=PROTOCOLS, required=True)
     parser.add_argument("--config")
+    parser.add_argument("--fixed-epochs", type=int)
     parser.add_argument("--expected-folds")
     parser.add_argument(
         "--expected-seeds", default=",".join(str(seed) for seed in DEFAULT_SEEDS)
     )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if args.fixed_epochs is not None and args.fixed_epochs <= 0:
+        parser.error("--fixed-epochs must be positive")
+    if args.protocol == "earlystop" and args.fixed_epochs is not None:
+        parser.error("--fixed-epochs applies only to --protocol fixed")
     try:
         expected_folds = (
             _parse_int_list(args.expected_folds, "--expected-folds")
@@ -539,19 +583,21 @@ def main() -> None:
         )
         expected_seeds = _parse_int_list(args.expected_seeds, "--expected-seeds")
         results = discover_fold_results(
-            args.root, args.dataset, config=args.config
+            args.root, args.dataset, args.protocol, config=args.config
         )
         summary = aggregate_results(
             results,
             dataset=args.dataset,
+            protocol=args.protocol,
             expected_folds=expected_folds,
             expected_seeds=expected_seeds,
             expected_samples=EXPECTED_SAMPLES[args.dataset],
+            fixed_epochs=args.fixed_epochs,
         )
         output, csv_path = write_summary(
             summary,
             args.output
-            or args.root / f"summary_{args.dataset}_earlystop.json",
+            or args.root / f"summary_{args.dataset}_{args.protocol}.json",
         )
     except (ValueError, OSError) as error:
         raise SystemExit(str(error)) from error

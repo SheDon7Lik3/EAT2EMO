@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Precompute SER fbank feature caches for the earlystop training split.
+"""Precompute SER fbank feature caches for a training stage.
 
 This does not train.  It instantiates the same FileAudioDataset used by
 fine-tuning, which reads the per-fold norm stats and writes one .npy per source
 file under feature_cache/<dataset>/<target_length>_stats<hash>/...
 
-The earlystop protocol trains on ``inner_train``; validation and test splits
-are not cached.
+Stages:
+    selection -> earlystop training, inner_train
+    fixed     -> fixed training, train
 """
 
 from __future__ import annotations
@@ -27,8 +28,10 @@ from ser_protocol import DATASETS, fold_dir_name  # noqa: E402
 
 torch.set_num_threads(1)
 
-STATS_STAGE = "selection"
-TRAIN_SPLIT = "inner_train"
+STAGE_SPLITS = {
+    "selection": "inner_train",
+    "fixed": "train",
+}
 DEFAULT_DATA_ROOT = os.environ.get(
     "SER_DATA_ROOT", "/root/songhao/datasets/SER_DATASET"
 )
@@ -72,6 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", choices=sorted(DATASETS), required=True)
     parser.add_argument("--fold", type=int)
     parser.add_argument("--all-folds", action="store_true")
+    parser.add_argument(
+        "--stage",
+        choices=tuple(STAGE_SPLITS),
+        default="selection",
+        help="selection for earlystop; fixed for fixed",
+    )
     parser.add_argument("--data-root", type=Path, default=Path(DEFAULT_DATA_ROOT))
     parser.add_argument(
         "--cache-root",
@@ -102,21 +111,22 @@ def main() -> None:
         else data_root / "feature_cache"
     ) / args.dataset
     stats_root = data_root / "norm_stats" / args.dataset
-    stats_path = stats_root / STATS_STAGE / f"{fold_dir_name(folds[0])}.json"
+    stats_path = stats_root / args.stage / f"{fold_dir_name(folds[0])}.json"
     if not stats_path.is_file():
         raise FileNotFoundError(stats_path)
 
+    split = STAGE_SPLITS[args.stage]
     for fold in folds:
         folder = fold_dir_name(fold)
         manifest_dir = data_root / "manifests" / args.dataset / folder
-        fold_stats = stats_root / STATS_STAGE / f"{folder}.json"
+        fold_stats = stats_root / args.stage / f"{folder}.json"
         if not fold_stats.is_file():
             raise FileNotFoundError(fold_stats)
-        manifest = manifest_dir / f"{TRAIN_SPLIT}.tsv"
+        manifest = manifest_dir / f"{split}.tsv"
         if not manifest.is_file():
             raise FileNotFoundError(manifest)
         print(
-            f"=== {args.dataset} fold {fold} {STATS_STAGE} / {TRAIN_SPLIT} ===",
+            f"=== {args.dataset} fold {fold} {args.stage} / {split} ===",
             flush=True,
         )
         dataset = build_dataset(
@@ -124,16 +134,16 @@ def main() -> None:
             cache_root=cache_root,
             stats_path=fold_stats,
             target_length=spec.target_length,
-            split=TRAIN_SPLIT,
+            split=split,
         )
         for index in range(len(dataset)):
             dataset[index]
             if (index + 1) % 500 == 0:
                 print(
-                    f"  {index + 1}/{len(dataset)} {TRAIN_SPLIT} cached",
+                    f"  {index + 1}/{len(dataset)} {split} cached",
                     flush=True,
                 )
-        print(f"  done {len(dataset)} {TRAIN_SPLIT} samples", flush=True)
+        print(f"  done {len(dataset)} {split} samples", flush=True)
 
 
 if __name__ == "__main__":

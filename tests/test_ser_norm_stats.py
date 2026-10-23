@@ -26,6 +26,9 @@ class SerNormStatsTest(unittest.TestCase):
         (manifest_dir / "inner_train.tsv").write_text(
             f"{audio_root}\ntone.wav\t{waveform.size}\n", encoding="utf-8"
         )
+        (manifest_dir / "train.tsv").write_text(
+            f"{audio_root}\ntone.wav\t{waveform.size}\n", encoding="utf-8"
+        )
         return root
 
     def test_computes_valid_frame_statistics(self):
@@ -65,6 +68,28 @@ class SerNormStatsTest(unittest.TestCase):
                 places=12,
             )
             self.assertEqual(len(payload["manifest_sha256"]), 64)
+
+    def test_fixed_stage_uses_train_split(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_data(Path(directory))
+            output = root / "norm_stats" / "emodb" / "fixed" / "fold_01.json"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(PROJECT_ROOT / "tools/compute_ser_norm_stats.py"),
+                    "--dataset", "emodb",
+                    "--fold", "1",
+                    "--stage", "fixed",
+                    "--data-root", str(root),
+                ],
+                cwd=PROJECT_ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["stage"], "fixed")
+            self.assertEqual(payload["split"], "train")
 
     def test_refuses_to_overwrite_by_default(self):
         with tempfile.TemporaryDirectory() as directory:

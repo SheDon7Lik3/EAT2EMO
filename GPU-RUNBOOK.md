@@ -135,31 +135,36 @@ head -3 "$SER_DATA_ROOT/manifests/emodb/fold_01/inner_train.tsv"
 
 ## 6. fold 归一化与特征缓存
 
-`--norm-mode fold` 前，先生成 `inner_train` 统计量：
+`--norm-mode fold` 前，先生成对应 stage 的统计量：
 
 ```bash
 for ds in emodb iemocap ravdess-speech ravdess-song; do
-  $PYTHON_BIN tools/compute_ser_norm_stats.py --dataset "$ds" --all-folds
+  # earlystop
+  $PYTHON_BIN tools/compute_ser_norm_stats.py --dataset "$ds" --all-folds --stage selection
+  # fixed
+  $PYTHON_BIN tools/compute_ser_norm_stats.py --dataset "$ds" --all-folds --stage fixed
 done
 ```
 
 输出：
 
 ```text
-$SER_DATA_ROOT/norm_stats/<dataset>/selection/fold_XX.json
+$SER_DATA_ROOT/norm_stats/<dataset>/selection/fold_XX.json   # inner_train
+$SER_DATA_ROOT/norm_stats/<dataset>/fixed/fold_XX.json       # train
 ```
 
-`selection` 是历史目录名，表示 inner-train 统计量；earlystop 训练和评估都读取它。不要重写/重命名已有文件，否则 feature cache 的 stats hash 会失效。
+不要重写/重命名已有文件，否则 feature cache 的 stats hash 会失效。
 
 可选预生成训练特征缓存：
 
 ```bash
 for ds in emodb iemocap ravdess-speech ravdess-song; do
-  $PYTHON_BIN tools/precompute_ser_features.py --dataset "$ds" --all-folds
+  $PYTHON_BIN tools/precompute_ser_features.py --dataset "$ds" --all-folds --stage selection
+  $PYTHON_BIN tools/precompute_ser_features.py --dataset "$ds" --all-folds --stage fixed
 done
 ```
 
-缓存只覆盖 `inner_train`。
+selection 缓存 `inner_train`，fixed 缓存完整 `train`。
 
 ## 7. 单 fold 训练
 
@@ -167,91 +172,99 @@ done
 
 ```bash
 cd "$REPO"
+# earlystop
 bash scripts/finetuning_SER.sh \
   --dataset ravdess-speech --fold 0 --seed 3949 \
-  --norm-mode fold --dry-run
+  --protocol earlystop --norm-mode fold --dry-run
+
+# fixed
+bash scripts/finetuning_SER.sh \
+  --dataset ravdess-speech --fold 0 --seed 3949 \
+  --protocol fixed --fixed-epochs 60 --norm-mode fold --dry-run
 ```
 
 确认输出：
 
-- `protocol=earlystop`
-- `train_subset=inner_train`
-- `valid_subset=inner_valid`
-- `disable_validation=false`
-- `max_epochs` / `max_updates` / `warmup_updates`
-- eval 使用 `checkpoint_best.pt`
+- earlystop：`inner_train` / `inner_valid`、`disable_validation=false`、`checkpoint_best.pt`
+- fixed：`train`、`disable_validation=true`、`checkpoint_final.pt`
 
 正式运行：
 
 ```bash
+# earlystop
 bash scripts/finetuning_SER.sh \
   --dataset ravdess-speech --fold 0 --seed 3949 \
-  --norm-mode fold --num-workers 12 \
+  --protocol earlystop --norm-mode fold --num-workers 12 \
+  --wandb-project eat2emo-ser
+
+# fixed
+bash scripts/finetuning_SER.sh \
+  --dataset ravdess-speech --fold 0 --seed 3949 \
+  --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12 \
   --wandb-project eat2emo-ser
 ```
 
-AS-2M 权重：
+AS-2M 权重：先 `export SER_PRETRAINED=...ft_encoder.pt`，命令同上。
 
-```bash
-export SER_PRETRAINED=/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_ft_encoder.pt
-bash scripts/finetuning_SER.sh \
-  --dataset ravdess-speech --fold 0 --seed 3949 \
-  --norm-mode fold --num-workers 12 \
-  --wandb-project eat2emo-ser
-```
-
-`--max-epochs N` 可覆盖数据集默认扫描上限；smoke 用 1。
+`--max-epochs N` 只用于 earlystop；`--fixed-epochs N` 只用于 fixed；smoke 用 1。
 
 ## 8. 输出目录
 
 ```text
+# earlystop
 ${SER_OUTPUT_ROOT}/{dataset}/earlystop/{config}/seed_N/fold_XX/
-├── run_manifest.json
-├── train.log
 ├── checkpoint_best.pt
 ├── earlystop_summary.json
-├── eval.log
-└── results/
-    ├── metrics.json
-    ├── predictions.npz
-    ├── paths.txt
-    └── confusion_matrix.csv
+└── results/...
+
+# fixed
+${SER_OUTPUT_ROOT}/{dataset}/fixed/{config}/seed_N/fold_XX/
+├── checkpoint_final.pt
+└── results/...
 ```
 
 说明：
 
-- `checkpoint_best.pt` 是 inner-valid UAR 最优 checkpoint；
-- `earlystop_summary.json` 含逐 epoch 指标和 best epoch；
-- `results/metrics.json` 是 outer-valid 单次评估。
+- earlystop：`checkpoint_best.pt` 是 inner-valid UAR 最优 checkpoint，`earlystop_summary.json` 含逐 epoch 指标；
+- fixed：`checkpoint_final.pt` 是最后一个 checkpoint；
+- 两种协议的 `results/metrics.json` 都是 outer-valid 单次评估。
 
 ## 9. W&B
 
 ```text
-run name: <dataset>-earlystop-foldXX-seed<SEED>-<checkpoint stem>
-group:    <dataset>-earlystop-<config>
-job_type: earlystop
+run name: <dataset>-<protocol>-foldXX-seed<SEED>-<checkpoint stem>
+group:    <dataset>-<protocol>-<config>
+job_type: earlystop / fixed
 ```
 
 示例：
 
 ```bash
+# earlystop
 SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO \
   bash scripts/finetuning_SER.sh \
     --dataset ravdess-speech --fold 0 --seed 3949 \
-    --norm-mode fold --num-workers 12 \
+    --protocol earlystop --norm-mode fold --num-workers 12 \
+    --wandb-project eat2emo-ser
+
+# fixed
+SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO \
+  bash scripts/finetuning_SER.sh \
+    --dataset ravdess-speech --fold 0 --seed 3949 \
+    --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12 \
     --wandb-project eat2emo-ser
 ```
 
-W&B 查看 `inner_valid` 的 loss/accuracy/WAR/UAR/macro-F1 曲线。
+W&B 查看训练曲线；earlystop 另有 `inner_valid` 的 loss/accuracy/WAR/UAR/macro-F1。
 
 ## 10. 监控
 
 ```bash
-tail -n 50 -f "$SER_OUTPUT_ROOT/<dataset>/earlystop/<config>/seed_3949/fold_XX/train.log"
+tail -n 50 -f "$SER_OUTPUT_ROOT/<dataset>/<protocol>/<config>/seed_3949/fold_XX/train.log"
 nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv
 ```
 
-训练结束后检查：
+earlystop 结束后检查：
 
 ```bash
 D="$SER_OUTPUT_ROOT/<dataset>/earlystop/<config>/seed_3949/fold_XX"
@@ -259,14 +272,26 @@ cat "$D/earlystop_summary.json" | head -40
 cat "$D/results/metrics.json" | head -40
 ```
 
+fixed 结束后检查：
+
+```bash
+D="$SER_OUTPUT_ROOT/<dataset>/fixed/<config>/seed_3949/fold_XX"
+cat "$D/results/metrics.json" | head -40
+```
+
 ## 11. 批量运行
 
-默认全部数据集、5 seeds、全 folds：
+默认全部数据集、5 seeds、全 folds、earlystop：
 
 ```bash
 cd "$REPO"
 bash scripts/run_all_SER.sh \
-  --norm-mode fold --num-workers 12 \
+  --protocol earlystop --norm-mode fold --num-workers 12 \
+  --wandb-project eat2emo-ser
+
+# fixed
+bash scripts/run_all_SER.sh \
+  --protocol fixed --fixed-epochs 60 --norm-mode fold --num-workers 12 \
   --wandb-project eat2emo-ser
 ```
 
@@ -276,8 +301,10 @@ bash scripts/run_all_SER.sh \
 --datasets LIST
 --seeds LIST|all
 --folds LIST|all
+--protocol earlystop|fixed
 --norm-mode audioset|fold
---max-epochs N
+--max-epochs N       # earlystop
+--fixed-epochs N     # fixed
 --num-workers N
 --wandb-project NAME
 --data-root PATH
@@ -292,7 +319,8 @@ bash scripts/run_all_SER.sh \
 
 ```bash
 nohup bash scripts/run_all_SER.sh \
-  --norm-mode fold --num-workers 12 --wandb-project eat2emo-ser \
+  --protocol earlystop --norm-mode fold --num-workers 12 \
+  --wandb-project eat2emo-ser \
   > run_all_earlystop.log 2>&1 &
 ```
 
@@ -303,30 +331,32 @@ nohup bash scripts/run_all_SER.sh \
 ```bash
 export SER_OUTPUT_ROOT=/root/songhao/experiments/EAT2EMO_smoke
 
+# earlystop
 bash scripts/finetuning_SER.sh \
   --dataset emodb --fold 1 --seed 3949 \
-  --norm-mode fold --max-epochs 1
+  --protocol earlystop --norm-mode fold --max-epochs 1
+
+# fixed
+bash scripts/finetuning_SER.sh \
+  --dataset emodb --fold 1 --seed 3949 \
+  --protocol fixed --fixed-epochs 1 --norm-mode fold
 ```
 
 检查：
 
 ```text
-train.log
-checkpoint_best.pt
-earlystop_summary.json
-results/metrics.json
-results/predictions.npz
-results/paths.txt
-results/confusion_matrix.csv
+earlystop: checkpoint_best.pt / earlystop_summary.json / results/metrics.json
+fixed:     checkpoint_final.pt / results/metrics.json
 ```
 
-`_maxep1` 会进入 config 名，与正式结果隔离。
+`_maxep1` / `_fixedep1` 会进入 config 名，与正式结果隔离。
 
 ## 13. 手动补评
 
 自动流程已包含 eval。补评直接调用：
 
 ```bash
+# earlystop
 D="$SER_OUTPUT_ROOT/emodb/earlystop/<config>/seed_3949/fold_01"
 BEST=$($PYTHON_BIN -c "import json; print(json.load(open('$D/earlystop_summary.json'))['best_epoch'])")
 MAX=$($PYTHON_BIN -c "import json; print(json.load(open('$D/earlystop_summary.json'))['max_epochs'])")
@@ -336,21 +366,40 @@ $PYTHON_BIN evaluation/eval_ser.py \
   --checkpoint "$D/checkpoint_best.pt" \
   --model-dir "$REPO" \
   --output "$D/results" \
-  --dataset emodb --fold 1 --seed 3949 \
+  --dataset emodb --protocol earlystop --fold 1 --seed 3949 \
   --selected-epoch "$BEST" --max-epochs "$MAX" \
   --norm-mode fold \
   --norm-stats-path "$SER_DATA_ROOT/norm_stats/emodb/selection/fold_01.json" \
+  --overwrite
+
+# fixed
+D="$SER_OUTPUT_ROOT/emodb/fixed/<config>/seed_3949/fold_01"
+$PYTHON_BIN evaluation/eval_ser.py \
+  --data "$SER_DATA_ROOT/manifests/emodb/fold_01" \
+  --checkpoint "$D/checkpoint_final.pt" \
+  --model-dir "$REPO" \
+  --output "$D/results" \
+  --dataset emodb --protocol fixed --fold 1 --seed 3949 \
+  --fixed-epochs 60 \
+  --norm-mode fold \
+  --norm-stats-path "$SER_DATA_ROOT/norm_stats/emodb/fixed/fold_01.json" \
   --overwrite
 ```
 
 ## 14. 汇总
 
 ```bash
+# earlystop
 $PYTHON_BIN evaluation/summarize_ser.py \
   "$SER_OUTPUT_ROOT/emodb/earlystop/<config>" \
-  --dataset emodb \
-  --config <config> \
+  --dataset emodb --protocol earlystop --config <config> \
   --output "$SER_OUTPUT_ROOT/emodb/earlystop/<config>/summary.json"
+
+# fixed
+$PYTHON_BIN evaluation/summarize_ser.py \
+  "$SER_OUTPUT_ROOT/emodb/fixed/<config>" \
+  --dataset emodb --protocol fixed --config <config> --fixed-epochs 60 \
+  --output "$SER_OUTPUT_ROOT/emodb/fixed/<config>/summary.json"
 ```
 
 输出 `summary.json` 和 `summary_folds.csv`。
@@ -360,13 +409,15 @@ $PYTHON_BIN evaluation/summarize_ser.py \
 | 现象 | 处理 |
 |---|---|
 | `Missing inner_train file` | manifests 未生成或不完整，重跑 §5 |
-| `Missing norm stats` | 先生成 §6 的 selection 统计量 |
+| `Missing norm stats` | 先生成 §6 对应 stage 的统计量 |
 | `Python 3.13` 报错 | 没导出 `PYTHON_BIN`，重新执行 §4 |
-| `--max-epochs` 非法 | 必须是正整数 |
+| `--max-epochs` / `--fixed-epochs` 非法 | 必须是正整数 |
+| `--max-epochs` 用在 fixed | 只能用于 earlystop |
 | `Refusing to overwrite` | 该 seed/fold 结果已存在；换输出根或清理旧目录 |
-| `Training did not produce checkpoint_best.pt` | 训练失败或 inner-valid UAR 未记录；看 `train.log` |
-| `Expected inner-valid metrics` | `train.log` 缺 epoch 或格式不是 JSON；检查 `common.log_format` |
-| `selected_epoch exceeds max_epochs` | `earlystop_summary.json` 与 eval 参数不一致 |
+| `Training did not produce checkpoint_best.pt` | earlystop 训练失败或 inner-valid UAR 未记录；看 `train.log` |
+| `Training did not produce checkpoint_last.pt` | fixed 训练失败；看 `train.log` |
+| `Expected inner-valid metrics` | earlystop `train.log` 缺 epoch 或格式不是 JSON |
+| `selected_epoch exceeds max_epochs` | earlystop summary 与 eval 参数不一致 |
 | `results` 已存在 | 手动补评加 `--overwrite` |
 | GPU 闲置但任务在跑 | 可能在 validation/checkpoint 写入；看 `train.log` 和 `nvidia-smi` |
 
@@ -374,10 +425,10 @@ $PYTHON_BIN evaluation/summarize_ser.py \
 
 - [ ] 代码已 rsync，关键文件 SHA256 一致
 - [ ] `PYTHON_BIN` 指向 eat2emo
-- [ ] manifests 含 `inner_train` / `inner_valid`
-- [ ] fold 模式下 norm stats 存在
-- [ ] dry-run 输出 `protocol=earlystop`、inner splits、`checkpoint_best.pt`
-- [ ] smoke 产出 `earlystop_summary.json` 和 `results/metrics.json`
+- [ ] manifests 含 `train`/`valid` 和 `inner_train`/`inner_valid`
+- [ ] fold 模式下对应 stage 的 norm stats 存在
+- [ ] dry-run 输出 `protocol=earlystop` 或 `protocol=fixed`，split/checkpoint 正确
+- [ ] smoke 产出对应 checkpoint 和 `results/metrics.json`
 - [ ] 正式结果在独立 `SER_OUTPUT_ROOT`
 - [ ] 全 fold 完成后 summary 校验通过
-- [ ] W&B job_type 为 `earlystop`
+- [ ] W&B job_type 为 `earlystop` 或 `fixed`
