@@ -442,7 +442,7 @@ class SerProtocolTest(unittest.TestCase):
                         if "=" in token and not token.startswith("--")
                     }
                     save_dir = Path(overrides["checkpoint.save_dir"])
-                    (save_dir / "checkpoint_last.pt").write_bytes(b"last")
+                    (save_dir / "checkpoint2.pt").write_bytes(b"last")
                 else:
                     log_path.write_text("eval complete\n", encoding="utf-8")
 

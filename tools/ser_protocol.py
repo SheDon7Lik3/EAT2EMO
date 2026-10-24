@@ -293,11 +293,24 @@ def hydra_train_command(plan: RunPlan) -> list[str]:
         f"checkpoint.save_dir={output}",
         f"checkpoint.restore_file={output / '__fresh_start__.pt'}",
         "checkpoint.patience=-1",
-        "checkpoint.no_epoch_checkpoints=true",
-        "checkpoint.no_last_checkpoints=false",
+        "checkpoint.no_last_checkpoints=true",
         "checkpoint.best_checkpoint_metric=uar",
         "checkpoint.maximize_best_checkpoint_metric=true",
     ]
+    if plan.protocol == "fixed":
+        command.extend(
+            [
+                "checkpoint.no_epoch_checkpoints=false",
+                f"checkpoint.save_interval={epochs}",
+            ]
+        )
+    else:
+        command.extend(
+            [
+                "checkpoint.no_epoch_checkpoints=true",
+                "checkpoint.save_interval=1",
+            ]
+        )
     if plan.norm_stats_path is not None:
         command.append(f"task.norm_stats_path={plan.norm_stats_path}")
     if plan.wandb_project:
@@ -524,11 +537,18 @@ def run_and_tee(command: Sequence[str], log_path: Path, env: dict | None = None)
         raise subprocess.CalledProcessError(return_code, list(command))
 
 
-def promote_final_checkpoint(output_dir: Path) -> Path:
-    source = output_dir / "checkpoint_last.pt"
+def promote_final_checkpoint(output_dir: Path, fixed_epochs: int) -> Path:
+    candidates = [
+        output_dir / f"checkpoint{fixed_epochs}.pt",
+        output_dir / "checkpoint_last.pt",
+    ]
+    source = next((path for path in candidates if path.is_file()), None)
     target = output_dir / "checkpoint_final.pt"
-    if not source.is_file():
-        raise RuntimeError(f"Training did not produce {source}")
+    if source is None:
+        raise RuntimeError(
+            "Training did not produce a final checkpoint; checked "
+            + ", ".join(str(path) for path in candidates)
+        )
     if target.exists() or target.is_symlink():
         raise FileExistsError(f"Refusing to overwrite {target}")
     try:
@@ -605,7 +625,8 @@ def execute_run(plan: RunPlan, dry_run: bool) -> None:
         checkpoint = plan.output_dir / "checkpoint_best.pt"
         selected_epoch: int | None = best_epoch
     else:
-        checkpoint = promote_final_checkpoint(plan.output_dir)
+        assert plan.fixed_epochs is not None
+        checkpoint = promote_final_checkpoint(plan.output_dir, plan.fixed_epochs)
         write_run_manifest(plan, command, best_epoch=None, status="trained")
         selected_epoch = None
 
