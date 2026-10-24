@@ -19,12 +19,13 @@ PROTOCOL="earlystop"
 NORM_MODE="audioset"
 MAX_EPOCHS=""
 FIXED_EPOCHS="60"
+BATCH_SIZE="32"
 NUM_WORKERS="${SER_NUM_WORKERS:-6}"
 WANDB_PROJECT="${SER_WANDB_PROJECT:-}"
 DRY_RUN=false
 
 usage() {
-  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol earlystop|fixed] [--norm-mode audioset|fold] [--max-epochs N] [--fixed-epochs N] [--num-workers N] [--wandb-project NAME] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
+  echo "Usage: $0 [--datasets LIST] [--seeds LIST|all] [--folds LIST|all] [--protocol earlystop|fixed] [--norm-mode audioset|fold] [--max-epochs N] [--fixed-epochs N] [--batch-size N] [--num-workers N] [--wandb-project NAME] [--data-root PATH] [--output-root PATH] [--config-name NAME] [--dry-run]"
   echo "Defaults: all four datasets; seeds ${DEFAULT_SEEDS}; folds all; protocol earlystop."
   echo "earlystop uses inner_train/inner_valid; fixed uses full train/valid with a fixed epoch budget."
   echo "Every completed fold grid is strictly summarized per dataset/protocol/config."
@@ -39,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     --norm-mode) NORM_MODE="${2:-}"; shift 2 ;;
     --max-epochs) MAX_EPOCHS="${2:-}"; shift 2 ;;
     --fixed-epochs) FIXED_EPOCHS="${2:-}"; shift 2 ;;
+    --batch-size) BATCH_SIZE="${2:-}"; shift 2 ;;
     --num-workers) NUM_WORKERS="${2:-}"; shift 2 ;;
     --wandb-project) WANDB_PROJECT="${2:-}"; shift 2 ;;
     --data-root) SER_DATA_ROOT="${2:-}"; shift 2 ;;
@@ -54,6 +56,7 @@ done
 [[ "$NORM_MODE" == audioset || "$NORM_MODE" == fold ]] || { echo "Invalid norm mode: $NORM_MODE" >&2; exit 2; }
 [[ "$NUM_WORKERS" =~ ^[0-9]+$ ]] || { echo "Invalid num workers: $NUM_WORKERS" >&2; exit 2; }
 [[ "$FIXED_EPOCHS" =~ ^[1-9][0-9]*$ ]] || { echo "--fixed-epochs must be positive" >&2; exit 2; }
+[[ "$BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "--batch-size must be positive" >&2; exit 2; }
 if [[ -n "$MAX_EPOCHS" && ! "$MAX_EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
   echo "--max-epochs must be positive" >&2
   exit 2
@@ -166,6 +169,9 @@ for dataset in "${dataset_list[@]}"; do
     ]]; then
       effective_config="${effective_config}_maxep${MAX_EPOCHS}"
     fi
+    if [[ "$BATCH_SIZE" != "32" ]]; then
+      effective_config="${effective_config}_bs${BATCH_SIZE}"
+    fi
   fi
 
   for seed in "${seed_list[@]}"; do
@@ -176,6 +182,7 @@ for dataset in "${dataset_list[@]}"; do
         --fold "$fold"
         --seed "$seed"
         --protocol "$PROTOCOL"
+        --batch-size "$BATCH_SIZE"
         --norm-mode "$NORM_MODE"
         --num-workers "$NUM_WORKERS"
         --data-root "$SER_DATA_ROOT"

@@ -192,6 +192,27 @@ class SerProtocolTest(unittest.TestCase):
         args.auto_config_name = False
         self.assertEqual(ser_protocol.resolve_config_name(args), "named_smoke")
 
+    def test_nondefault_batch_size_changes_schedule_and_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data_root = root / "data"
+            self.make_earlystop_splits(data_root, "emodb", 1)
+            code, stdout, stderr = self.run_main(
+                [
+                    "--dataset", "emodb", "--fold", "1", "--batch-size", "12",
+                    "--data-root", str(data_root), "--output-root", str(root / "runs"),
+                    "--dry-run",
+                ]
+            )
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertIn('"batch_size": 12', stdout)
+            self.assertIn('"max_updates": 240', stdout)
+            self.assertIn("dataset.batch_size=12", stdout)
+            self.assertIn(
+                f'"config_name": "{ser_protocol.DEFAULT_CONFIG_NAME}_bs12"',
+                stdout,
+            )
+
     def test_fold_norm_mode_requires_selection_stats_and_passes_path(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

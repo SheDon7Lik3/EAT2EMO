@@ -205,6 +205,7 @@ bash scripts/run_all_SER.sh \
 --norm-mode audioset|fold
 --max-epochs N       # earlystop
 --fixed-epochs N     # fixed
+--batch-size N       # default 32
 --num-workers N
 --wandb-project NAME
 --data-root PATH
@@ -280,7 +281,7 @@ summary_folds.csv
 
 ## 9. 运行原则
 
-- batch size 固定 32；updates = `ceil(train_samples/32) × epochs`，warmup 为 10%。
+- batch size 默认 32；可用 `--batch-size` 覆盖。updates = `ceil(train_samples/batch_size) × epochs`，warmup 为 10%。
 - 音频解码失败、空音频、无效样本立即终止，不跳过、不补位。
 - earlystop：训练 `inner_train`，`outer-valid` 不参与训练和选模。
 - fixed：训练完整 `train`，训练期间禁用 validation，`outer-valid` 最后评估一次。

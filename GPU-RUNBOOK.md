@@ -305,6 +305,7 @@ bash scripts/run_all_SER.sh \
 --norm-mode audioset|fold
 --max-epochs N       # earlystop
 --fixed-epochs N     # fixed
+--batch-size N       # default 32
 --num-workers N
 --wandb-project NAME
 --data-root PATH

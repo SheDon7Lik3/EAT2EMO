@@ -18,7 +18,7 @@ from typing import Iterable, Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-BATCH_SIZE = 32
+DEFAULT_BATCH_SIZE = 32
 DEFAULT_CONFIG_NAME = "eat_base_sr16k_audiosetnorm_bs32"
 DEFAULT_PRETRAINED = Path(
     "/root/songhao/ProJ/resources/EAT_Weight/EAT-base_epoch30_pt.pt"
@@ -61,6 +61,7 @@ class RunPlan:
     valid_subset: str
     max_epochs: int | None
     fixed_epochs: int | None
+    batch_size: int
     train_samples: int
     updates_per_epoch: int
     max_updates: int
@@ -109,7 +110,7 @@ def count_manifest_samples(path: Path) -> int:
     return len(entries)
 
 
-def compute_schedule(samples: int, epochs: int, batch_size: int = BATCH_SIZE) -> tuple[int, int, int]:
+def compute_schedule(samples: int, epochs: int, batch_size: int = DEFAULT_BATCH_SIZE) -> tuple[int, int, int]:
     if samples <= 0 or epochs <= 0 or batch_size <= 0:
         raise ValueError("samples, epochs, and batch_size must all be positive")
     updates_per_epoch = math.ceil(samples / batch_size)
@@ -148,6 +149,8 @@ def resolve_config_name(args: argparse.Namespace) -> str:
         max_epochs = requested_max_epochs(args)
         if max_epochs != DATASETS[args.dataset].max_epochs:
             name = f"{name}_maxep{max_epochs}"
+    if args.batch_size != DEFAULT_BATCH_SIZE:
+        name = f"{name}_bs{args.batch_size}"
     return name
 
 
@@ -207,7 +210,7 @@ def build_run_plan(args: argparse.Namespace) -> RunPlan:
     require_split(data_dir, valid_subset)
     train_samples = count_manifest_samples(data_dir / f"{train_subset}.tsv")
     updates_per_epoch, max_updates, warmup_updates = compute_schedule(
-        train_samples, epochs
+        train_samples, epochs, args.batch_size
     )
     norm_stats_path = None
     if args.norm_mode == "fold":
@@ -224,6 +227,7 @@ def build_run_plan(args: argparse.Namespace) -> RunPlan:
         valid_subset=valid_subset,
         max_epochs=max_epochs,
         fixed_epochs=fixed_epochs,
+        batch_size=args.batch_size,
         train_samples=train_samples,
         updates_per_epoch=updates_per_epoch,
         max_updates=max_updates,
@@ -280,7 +284,7 @@ def hydra_train_command(plan: RunPlan) -> list[str]:
         f"dataset.train_subset={plan.train_subset}",
         f"dataset.valid_subset={fairseq_valid_subset}",
         f"dataset.disable_validation={disable_validation}",
-        f"dataset.batch_size={BATCH_SIZE}",
+        f"dataset.batch_size={plan.batch_size}",
         f"dataset.num_workers={plan.num_workers}",
         "dataset.validate_interval=1",
         f"optimization.max_epoch={epochs}",
@@ -454,7 +458,7 @@ def write_run_manifest(
             payload[key] = str(value)
     payload.update(
         {
-            "batch_size": BATCH_SIZE,
+            "batch_size": plan.batch_size,
             "audio_normalization": {"source": "AudioSet", "mean": -4.268, "std": 4.569},
             "test_subset": "valid",
             "best_epoch": best_epoch,
@@ -616,6 +620,12 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", choices=sorted(DATASETS), required=True)
     parser.add_argument("--fold", type=int, required=True)
     parser.add_argument("--seed", type=int, default=3949)
+    parser.add_argument(
+        "--batch-size",
+        type=positive_int,
+        default=DEFAULT_BATCH_SIZE,
+        help=f"training batch size (default: {DEFAULT_BATCH_SIZE})",
+    )
     parser.add_argument("--protocol", choices=PROTOCOLS, default="earlystop")
     parser.add_argument(
         "--max-epochs",

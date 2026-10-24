@@ -101,7 +101,7 @@ bash scripts/run_all_SER.sh --protocol earlystop
 bash scripts/run_all_SER.sh --protocol fixed --fixed-epochs 60
 ```
 
-批量入口支持 `--datasets`、`--seeds`、`--folds`（单值、逗号列表或 `all`）、`--protocol earlystop|fixed`、`--norm-mode audioset|fold`、`--max-epochs`、`--fixed-epochs` 和 `--num-workers`；显式 fold 子集会跳过自动 summary。`fold` 模式需要先生成对应的 `$SER_DATA_ROOT/norm_stats/<dataset>/{selection|fixed}/...`。
+批量入口支持 `--datasets`、`--seeds`、`--folds`（单值、逗号列表或 `all`）、`--protocol earlystop|fixed`、`--norm-mode audioset|fold`、`--max-epochs`、`--fixed-epochs`、`--batch-size` 和 `--num-workers`；显式 fold 子集会跳过自动 summary。`fold` 模式需要先生成对应的 `$SER_DATA_ROOT/norm_stats/<dataset>/{selection|fixed}/...`。
 
 训练进度和曲线使用 W&B：
 
